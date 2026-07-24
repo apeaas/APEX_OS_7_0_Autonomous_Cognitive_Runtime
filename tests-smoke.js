@@ -33,7 +33,10 @@ child.stdout.on("data", async chunk => {
     const adapters = await adapterRes.json();
     if (adapters.externalAccountsEnabled !== false) throw new Error("Integraciones externas habilitadas por error");
 
-    for (const secretPath of ["/.env", "/server.js", "/data/apex-runtime-state.json"]) {
+    const marketStatus = await fetch(`http://127.0.0.1:${port}/api/market/status`).then(r => r.json());
+    if (!marketStatus.readOnly || marketStatus.hardLocks?.liveTrading !== false || marketStatus.hardLocks?.externalAccounts !== false) throw new Error("Gateway sin locks read-only");
+
+    for (const secretPath of ["/.env", "/server.js", "/data/apex-runtime-state.json", "/data/apex-market-cache.json"]) {
       const response = await fetch(`http://127.0.0.1:${port}${secretPath}`);
       if (response.status !== 404) throw new Error(`El servidor expuso ${secretPath}`);
     }

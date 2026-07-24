@@ -192,7 +192,12 @@ document.addEventListener("DOMContentLoaded", () => {
       };
       applyFeedQuality(quality);
       state.marketSource = marketQuality?.clientSource?.(quality, state.gatewayFailures) || (state.gatewayFailures >= 3 ? "direct_fallback" : "gateway_wait");
-      if (state.marketSource === "direct_fallback") startDirectFallback();
+      if (state.marketSource === "direct_fallback") {
+        startDirectFallback();
+        if (state.socket?.readyState === WebSocket.OPEN) {
+          applyFeedQuality({ status: "degraded", trusted: false, source: "browser_direct_fallback", reason: "gateway_unavailable_direct_feed_visible" });
+        }
+      }
     }
   }
 

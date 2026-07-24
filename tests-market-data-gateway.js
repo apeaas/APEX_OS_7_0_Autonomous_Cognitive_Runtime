@@ -139,6 +139,9 @@ async function main() {
     SYMBOLS.forEach((symbol, index) => firstSocket.emit("message", { data: JSON.stringify({ data: ticker(symbol, now, 100 + index) }) }));
     assert.equal(gateway.quality.status, "healthy");
     assert.equal(gateway.quality.trusted, true);
+    const stableQualityEvents = events.filter(event => event.type === "MARKET_GATEWAY_QUALITY_CHANGED").length;
+    gateway.evaluateQuality("same_state_no_event");
+    assert.equal(events.filter(event => event.type === "MARKET_GATEWAY_QUALITY_CHANGED").length, stableQualityEvents, "No debe persistir telemetría repetitiva sin transición");
     assert.equal(gateway.snapshot().executionMode, "PAPER_ONLY");
     assert.equal(gateway.status().readOnly, true);
 

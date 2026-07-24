@@ -11,7 +11,7 @@ function fail(label, detail="") { console.error(`✖ ${label}${detail ? ` — ${
   console.log("\nAPEX OS 7.0 · DIAGNÓSTICO LOCAL\n");
   const major=Number(process.versions.node.split(".")[0]);
   major>=18 ? ok("Node.js", process.version) : fail("Node.js", `se requiere 18+, detectado ${process.version}`);
-  for(const rel of ["server.js","index.html","assets/js/apex-7-runtime.js","config/apex_autonomy.json","config/apex_permissions.json","config/apex_integrations.json"]){
+  for(const rel of ["server.js","index.html","assets/js/apex-7-runtime.js","assets/js/market-math.js","assets/js/market-quality.js","lib/market-data/contracts.js","lib/market-data/gateway.js","config/apex_autonomy.json","config/apex_permissions.json","config/apex_integrations.json"]){
     fs.existsSync(path.join(root,rel)) ? ok(rel) : fail(rel,"archivo faltante");
   }
   try {
@@ -21,6 +21,12 @@ function fail(label, detail="") { console.error(`✖ ${label}${detail ? ` — ${
     auto.hardLocks?.liveTrading===false ? ok("Live trading","bloqueado") : fail("Live trading","lock inválido");
     auto.hardLocks?.externalAccounts===false ? ok("Cuentas externas","bloqueadas") : fail("Cuentas externas","lock inválido");
   } catch(e){ fail("Configuración de autonomía",e.message); }
+  try {
+    const quality=require(path.join(root,"assets/js/market-quality.js"));
+    quality.gate("paper_open",{status:"healthy",trusted:true}).ok===true && quality.gate("paper_open",{status:"degraded",trusted:false}).ok===false
+      ? ok("Market Data policy","healthy requerido para operar")
+      : fail("Market Data policy","barrera de confianza invÃ¡lida");
+  } catch(e){ fail("Market Data policy",e.message); }
   const envPath=path.join(root,".env");
   if(!fs.existsSync(envPath)) warn(".env","no existe; el launcher lo creará");
   else {

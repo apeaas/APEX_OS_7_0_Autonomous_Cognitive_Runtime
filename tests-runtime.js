@@ -44,6 +44,15 @@ mock.listen(mockPort, "127.0.0.1", () => {
       response = await fetch(`${base}/api/runtime/mode`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: "paper_autonomous", activationPhrase: "HABILITAR PAPER AUTO" }) });
       if (!response.ok) throw new Error("No se habilitó autonomía con frase");
 
+      response = await fetch(`${base}/api/runtime/snapshot`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ snapshot: { ...snapshot, feedQuality: { status: "degraded", trusted: false, source: "gateway", reason: "test_degraded" } } }) });
+      if (!response.ok) throw new Error("Snapshot degradado rechazado");
+      response = await fetch(`${base}/api/runtime/cycle`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: "feed-degraded-test" }) });
+      const blockedCycle = await response.json();
+      if (!response.ok || !blockedCycle.ok || !blockedCycle.noop || calls !== 0) throw new Error("El runtime no bloqueó el ciclo con feed degradado");
+
+      response = await fetch(`${base}/api/runtime/snapshot`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ snapshot }) });
+      if (!response.ok) throw new Error("Snapshot saludable rechazado");
+
       response = await fetch(`${base}/api/runtime/config`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ autonomyCapPct: 99, maxPositionPct: 99, riskPerTradePct: 99 }) });
       const configResult = await response.json();
       if (!configResult.ok || configResult.config.autonomyCapPct !== 5 || configResult.config.maxPositionPct !== 2 || configResult.config.riskPerTradePct !== 0.5) throw new Error("Locks de configuración fallaron");
