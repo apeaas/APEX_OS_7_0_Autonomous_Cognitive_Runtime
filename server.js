@@ -30,6 +30,12 @@ const { GovernanceEngine } = require("./lib/governance/engine");
 const { evaluateProposal } = require("./lib/cognitive-improvement/evaluator");
 const { ProposalRegistry } = require("./lib/cognitive-improvement/proposal-registry");
 const { DecisionJournal } = require("./lib/decision-journal/store");
+const { VoiceAudit } = require("./lib/voice/audit");
+const { VoiceCommandInterpreter } = require("./lib/voice/command-interpreter");
+const { OpenAIRealtimeProvider } = require("./lib/voice/providers/openai-realtime-provider");
+const { MockVoiceProvider } = require("./lib/voice/providers/mock-voice-provider");
+const { VoiceSessionService } = require("./lib/voice/session-service");
+const { voiceToolDefinitions } = require("./lib/voice/tool-policy");
 const marketQuality = require("./assets/js/market-quality");
 
 const ROOT = __dirname;
@@ -52,6 +58,7 @@ const PAPER_SNAPSHOT_FILE = path.join(DATA_DIR, "apex-paper-snapshot.json");
 const CONSTITUTION_REGISTRY_FILE = path.join(DATA_DIR, "apex-active-constitution.json");
 const IMPROVEMENT_AUDIT_FILE = path.join(DATA_DIR, "apex-improvement-audit.ndjson");
 const DECISION_JOURNAL_FILE = path.join(DATA_DIR, "apex-decision-journal.ndjson");
+const VOICE_AUDIT_FILE = path.join(DATA_DIR, "apex-voice-audit.ndjson");
 const AUTONOMY_SPEC = readJsonFile(path.join(ROOT, "config", "apex_autonomy.json"), {});
 const INTEGRATION_SPEC = readJsonFile(path.join(ROOT, "config", "apex_integrations.json"), {});
 const HUMAN_AUTONOMY_CEILING_PCT = 5;
@@ -80,6 +87,61 @@ const confirmationRegistry = new ConfirmationRegistry();
 const autonomousFund = new AutonomousFundService({ store: paperEventStore, snapshots: paperSnapshotStore });
 const proposalRegistry = new ProposalRegistry({ filePath: IMPROVEMENT_AUDIT_FILE });
 const decisionJournal = new DecisionJournal({ filePath: DECISION_JOURNAL_FILE });
+const voiceAudit = new VoiceAudit({ filePath: VOICE_AUDIT_FILE });
+const voiceInterpreter = new VoiceCommandInterpreter({
+  readers: {
+    get_runtime_status: () => publicRuntimeState(),
+    get_market_quality: () => marketGateway.status(),
+    get_paper_portfolio: () => ({
+      projection: paperQueries.portfolio(trustedMarketPrices()),
+      integrity: paperQueries.integrity(),
+    }),
+    get_constitution: () => ({ constitution: activeConstitution, registry: constitutionRegistry.metadata() }),
+    get_autonomous_fund: () => {
+      autonomousFund.refresh();
+      return { fund: autonomousFund.current(), executionMode: "PAPER_ONLY" };
+    },
+    explain_risk: args => {
+      const riskDecision = evaluatePaperRisk(args.command || {}, "assistant");
+      return { riskDecision, explanation: explainRiskDecision(riskDecision) };
+    },
+    get_decision_journal: args => ({ entries: decisionJournal.list(args.limit) }),
+    get_documentation: () => ({
+      documents: [
+        "APEX_7_1_ARCHITECTURE.md",
+        "APEX_7_1_SECURITY.md",
+        "APEX_7_1_LEDGER_AND_MIGRATION.md",
+        "APEX_7_1_CONSTITUTION_AND_FUND.md",
+        "APEX_7_1_RISK_AND_GOVERNANCE.md",
+        "APEX_7_1_COGNITIVE_IMPROVEMENT.md",
+        "APEX_7_1_VOICE_CONSOLE.md",
+      ],
+    }),
+  },
+});
+const openAIVoiceProvider = new OpenAIRealtimeProvider({
+  apiKey: OPENAI_API_KEY,
+  baseUrl: OPENAI_BASE_URL,
+  model: OPENAI_REALTIME_MODEL,
+  timeoutMs: Number(process.env.APEX_VOICE_CONNECT_TIMEOUT_MS || 20_000),
+  sessionConfig: voiceRealtimeSessionConfig,
+});
+const mockVoiceProvider = new MockVoiceProvider();
+const voiceSessions = new VoiceSessionService({
+  providers: {
+    "openai-realtime": openAIVoiceProvider,
+    mock: mockVoiceProvider,
+  },
+  interpreter: voiceInterpreter,
+  audit: voiceAudit,
+  limits: {
+    sessionTtlMs: Number(process.env.APEX_VOICE_SESSION_TTL_MS || 15 * 60 * 1000),
+    maxReconnects: Number(process.env.APEX_VOICE_MAX_RECONNECTS || 3),
+    maxToolCalls: Number(process.env.APEX_VOICE_MAX_TOOL_CALLS || 40),
+    maxResponses: Number(process.env.APEX_VOICE_MAX_RESPONSES || 48),
+    connectTimeoutMs: Number(process.env.APEX_VOICE_CONNECT_TIMEOUT_MS || 20_000),
+  },
+});
 const sessionManager = new SessionManager({
   ttlMs: Number(process.env.APEX_SESSION_TTL_MS || 20 * 60 * 1000),
 });
@@ -317,6 +379,12 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/api/decision-journal") {
       return sendJson(res, 200, { ok: true, entries: decisionJournal.list(url.searchParams.get("limit")) });
     }
+    if (req.method === "GET" && url.pathname === "/api/voice/health") {
+      return sendJson(res, 200, voiceSessions.getHealth());
+    }
+    if (req.method === "GET" && url.pathname === "/api/voice/audit") {
+      return sendJson(res, 200, { ok: true, records: voiceAudit.list(url.searchParams.get("limit")) });
+    }
     if (req.method === "GET" && url.pathname === "/api/market/history") {
       const symbol = normalizeSymbol(url.searchParams.get("symbol"));
       const history = marketGateway.history(symbol);
@@ -450,6 +518,42 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok: true, proposal });
     }
 
+    if (req.method === "POST" && url.pathname === "/api/voice/sessions") {
+      const payload = await readJson(req);
+      const session = voiceSessions.create(payload, voiceRequestContext(req));
+      appendRuntimeEvent("VOICE_SESSION_CREATED", { voiceSessionId: session.id, provider: session.provider }, session.provider === "mock" ? "warning" : "info");
+      return sendJson(res, 201, { ok: true, session });
+    }
+
+    const voiceCallMatch = url.pathname.match(/^\/api\/voice\/sessions\/([^/]+)\/call$/);
+    if (req.method === "POST" && voiceCallMatch) {
+      const sdp = await readText(req, req.apexSecurity.maxBytes);
+      const result = await voiceSessions.connect(voiceCallMatch[1], sdp, voiceRequestContext(req));
+      appendRuntimeEvent("REALTIME_CALL_CREATED", { voiceSessionId: result.session.id, model: OPENAI_REALTIME_MODEL }, "success");
+      res.writeHead(201, { "Content-Type": "application/sdp", "Cache-Control": "no-store" });
+      return res.end(result.answerSdp);
+    }
+
+    const voiceToolMatch = url.pathname.match(/^\/api\/voice\/sessions\/([^/]+)\/tools$/);
+    if (req.method === "POST" && voiceToolMatch) {
+      const result = await voiceSessions.executeTool(voiceToolMatch[1], await readJson(req), voiceRequestContext(req));
+      return sendJson(res, 200, result);
+    }
+
+    const voiceInterruptMatch = url.pathname.match(/^\/api\/voice\/sessions\/([^/]+)\/interrupt$/);
+    if (req.method === "POST" && voiceInterruptMatch) {
+      await readJson(req);
+      const session = await voiceSessions.interrupt(voiceInterruptMatch[1], voiceRequestContext(req));
+      return sendJson(res, 200, { ok: true, session });
+    }
+
+    const voiceDisconnectMatch = url.pathname.match(/^\/api\/voice\/sessions\/([^/]+)\/disconnect$/);
+    if (req.method === "POST" && voiceDisconnectMatch) {
+      await readJson(req);
+      const session = await voiceSessions.disconnect(voiceDisconnectMatch[1], voiceRequestContext(req));
+      return sendJson(res, 200, { ok: true, session });
+    }
+
     if (req.method === "POST" && url.pathname === "/api/paper/commands") {
       const decisionStartedAt = Date.now();
       const payload = await readJson(req);
@@ -513,15 +617,6 @@ const server = http.createServer(async (req, res) => {
       const payload = await readJson(req);
       const result = autonomousFund.execute(payload, fundCommandContext(req));
       return sendJson(res, 200, result);
-    }
-
-    if (req.method === "POST" && url.pathname === "/api/realtime/call") {
-      if (!OPENAI_API_KEY) return sendJson(res, 503, { error: "AI_RUNTIME_NOT_CONFIGURED" });
-      const sdp = await readText(req, req.apexSecurity.maxBytes);
-      if (!sdp.includes("v=0")) return sendJson(res, 400, { error: "SDP inválido" });
-      const answer = await createRealtimeCall(sdp);
-      res.writeHead(201, { "Content-Type": "application/sdp", "Cache-Control": "no-store" });
-      return res.end(answer);
     }
 
     if (req.method !== "GET" && req.method !== "HEAD") return sendJson(res, 405, { error: "Método no permitido" });
@@ -892,7 +987,7 @@ function createPlanFromAction(args) {
 
 function publicRuntimeState() {
   autonomousFund.refresh();
-  return { ok: true, service: "APEX Constitutional Cognitive Voice Runtime", version: "7.1.0", configured: Boolean(OPENAI_API_KEY), model: OPENAI_MODEL, realtimeModel: OPENAI_REALTIME_MODEL, executionMode: "PAPER_ONLY", externalAccounts: false, liveTrading: false, mode: runtime.mode, emergencyStop: runtime.emergencyStop, cycleStatus: runtime.cycleStatus, lastCycleAt: runtime.lastCycleAt, nextCycleAt: runtime.nextCycleAt, snapshotReceivedAt: runtime.snapshotReceivedAt, snapshotFresh: isSnapshotFresh(), config: runtime.config, stats: runtime.stats, queue: runtime.queue.slice(0, 50), history: runtime.history.slice(0, 50), plans: runtime.plans.slice(0, 50), lastCycleDecision: runtime.lastCycleDecision, hardLocks: hardLocks(), constitution: constitutionRegistry.metadata(), riskPolicyVersion: "unified-risk.v1", fund: autonomousFund.current(), integrations: integrationPayload().adapters };
+  return { ok: true, service: "APEX Constitutional Cognitive Voice Runtime", version: "7.1.0", configured: Boolean(OPENAI_API_KEY), model: OPENAI_MODEL, realtimeModel: OPENAI_REALTIME_MODEL, executionMode: "PAPER_ONLY", externalAccounts: false, liveTrading: false, mode: runtime.mode, emergencyStop: runtime.emergencyStop, cycleStatus: runtime.cycleStatus, lastCycleAt: runtime.lastCycleAt, nextCycleAt: runtime.nextCycleAt, snapshotReceivedAt: runtime.snapshotReceivedAt, snapshotFresh: isSnapshotFresh(), config: runtime.config, stats: runtime.stats, queue: runtime.queue.slice(0, 50), history: runtime.history.slice(0, 50), plans: runtime.plans.slice(0, 50), lastCycleDecision: runtime.lastCycleDecision, hardLocks: hardLocks(), constitution: constitutionRegistry.metadata(), riskPolicyVersion: "unified-risk.v1", fund: autonomousFund.current(), integrations: integrationPayload().adapters, voice: voiceSessions.getHealth() };
 }
 
 function runtimeSummary() {
@@ -904,7 +999,7 @@ function runtimeSummary() {
 }
 
 function healthPayload() {
-  return { ok: true, service: "APEX Constitutional Cognitive Voice Runtime", version: "7.1.0", model: OPENAI_MODEL, realtimeModel: OPENAI_REALTIME_MODEL, configured: Boolean(OPENAI_API_KEY), executionMode: "PAPER_ONLY", externalAccounts: false, liveTrading: false, mode: runtime.mode, emergencyStop: runtime.emergencyStop, dataStore: "append-only-paper-ledger+local-runtime-json", paperLedger: paperQueries.integrity(), marketData: marketGateway.status(), uptimeSeconds: Math.round(process.uptime()) };
+  return { ok: true, service: "APEX Constitutional Cognitive Voice Runtime", version: "7.1.0", model: OPENAI_MODEL, realtimeModel: OPENAI_REALTIME_MODEL, configured: Boolean(OPENAI_API_KEY), executionMode: "PAPER_ONLY", externalAccounts: false, liveTrading: false, mode: runtime.mode, emergencyStop: runtime.emergencyStop, dataStore: "append-only-paper-ledger+local-runtime-json", paperLedger: paperQueries.integrity(), marketData: marketGateway.status(), voice: voiceSessions.getHealth(), uptimeSeconds: Math.round(process.uptime()) };
 }
 
 function canonicalRuntimeSnapshot() {
@@ -1085,6 +1180,45 @@ function improvementContext(req) {
   };
 }
 
+function voiceRequestContext(req) {
+  return {
+    ownerSessionId: req.apexSecurity.session.sessionId,
+    killSwitch: runtime.emergencyStop,
+  };
+}
+
+function voiceRealtimeSessionConfig() {
+  return {
+    type: "realtime",
+    model: OPENAI_REALTIME_MODEL,
+    instructions: [
+      SYSTEM_INSTRUCTIONS,
+      "# Voz",
+      "Respondé en español, con fluidez, de forma directa y normalmente en 1–3 frases.",
+      "Disentí cuando la evidencia no alcance. Declará incertidumbre y datos degradados.",
+      "No ejecutes herramientas mutables. Sólo consultá o prepará borradores.",
+      "Toda operación PAPER requiere CommandDraft, confirmación visual, Risk y Governance por las APIs normales.",
+      "Nunca describas una narrativa o un feed degradado como una decisión operable.",
+    ].join("\n"),
+    output_modalities: ["audio"],
+    audio: {
+      input: {
+        noise_reduction: { type: "far_field" },
+        transcription: { model: "gpt-4o-mini-transcribe", language: "es" },
+        turn_detection: {
+          type: "semantic_vad",
+          create_response: true,
+          interrupt_response: true,
+          eagerness: "auto",
+        },
+      },
+      output: { voice: "marin", speed: 1.02 },
+    },
+    tools: voiceToolDefinitions(),
+    tool_choice: "auto",
+  };
+}
+
 function appendDecisionJournal(intent, riskDecision, governanceDecision, profile, startedAt, outcome) {
   return decisionJournal.append({
     context: {
@@ -1124,20 +1258,6 @@ function createChatRuntimeAction(name, args) {
   if (name === "create_plan") return createPlanFromAction(args);
   if (name === "manage_plan") return updatePlan(args.plan_id, { status: args.status, reason: args.reason });
   return null;
-}
-
-async function createRealtimeCall(sdp) {
-  const form = new FormData();
-  form.set("sdp", new Blob([sdp], { type: "application/sdp" }), "offer.sdp");
-  form.set("session", new Blob([JSON.stringify({ type: "realtime", model: OPENAI_REALTIME_MODEL, instructions: `${SYSTEM_INSTRUCTIONS}\nEn voz, sé breve. No ejecutes herramientas directamente: transcribí y remití los comandos operativos al Command Runtime.`, output_modalities: ["audio"], audio: { input: { noise_reduction: { type: "far_field" }, transcription: { model: "gpt-4o-mini-transcribe", language: "es" }, turn_detection: { type: "semantic_vad", create_response: true, interrupt_response: true, eagerness: "auto" } }, output: { voice: "marin", speed: 1.02 } } })], { type: "application/json" }), "session.json");
-  const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), 45_000);
-  try {
-    const response = await fetch(`${OPENAI_BASE_URL}/realtime/calls`, { method: "POST", headers: { Authorization: `Bearer ${OPENAI_API_KEY}` }, body: form, signal: controller.signal });
-    const text = await response.text();
-    if (!response.ok) throw Object.assign(new Error(text.slice(0, 500) || `Realtime ${response.status}`), { statusCode: 502 });
-    appendRuntimeEvent("REALTIME_CALL_CREATED", { model: OPENAI_REALTIME_MODEL }, "success");
-    return text;
-  } finally { clearTimeout(timeout); }
 }
 
 async function openAIResponse(body) {

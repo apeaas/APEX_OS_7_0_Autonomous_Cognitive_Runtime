@@ -493,3 +493,111 @@ reglas activas.
 
 `PASS`. APEX puede proponer y evaluar con trazabilidad, pero no puede autorizarse
 ni aplicar sus propios cambios.
+
+## Gate 6 — Realtime Voice Console
+
+### Objetivo
+
+Incorporar conversación de voz/texto persistente e interrumpible sin crear una
+autoridad paralela ni exponer credenciales al browser.
+
+### Implementación
+
+- Provider interface con implementaciones `OpenAIRealtimeProvider` y
+  `MockVoiceProvider`. El mock es determinístico, funciona sin clave y se
+  identifica como simulación sin audio real.
+- El provider OpenAI usa WebRTC mediante el flujo unificado documentado:
+  el browser crea SDP y data channel, mientras el backend autentica
+  `POST /v1/realtime/calls`. La API key nunca se entrega al browser.
+- `OPENAI_REALTIME_MODEL` desacopla el contrato del modelo. Se conserva
+  `gpt-realtime` como fallback estable solicitado; la cuenta local no tiene clave
+  configurada, por lo que disponibilidad y costos reales no se afirman.
+- State machine explícita:
+  `disabled`, `requesting_permission`, `connecting`, `listening`, `processing`,
+  `speaking`, `interrupted`, `reconnecting`, `error`.
+- Sesiones de voz ligadas a la sesión criptográfica local, con expiración,
+  rechazo de doble conexión, timeouts, máximo de reconexiones, tool calls y
+  respuestas.
+- Interrupción Realtime envía `response.cancel` y
+  `output_audio_buffer.clear`; el stream remoto puede reanudarse después.
+- Reconexión exponencial acotada y corregida para que un fallo durante
+  `reconnecting` programe el siguiente intento sin quedar bloqueado.
+- Tool policy por allowlist: lecturas, drafts con confirmación visual y bloqueo
+  por defecto. Herramientas de ejecución, live, credenciales, Constitución,
+  Risk, etapa, kill switch, fondo, firmas y transferencias están prohibidas.
+- Pipeline mutable:
+  transcript → `CommandDraft` → confirmación visual ligada a sesión →
+  `/api/paper/commands` → Unified Risk → Governance → efecto PAPER.
+- ImprovementProposal de voz sólo puede registrarse en `DRAFT` tras acción
+  humana; nunca se aprueba, aplica, mezcla ni despliega.
+- Voice Audit NDJSON con `fsync`, cadena SHA-256 y redacción de tokens, API keys,
+  Authorization, SDP y cualquier audio/bytes. No se guarda audio crudo.
+- Panel persistente con conexión, desconexión, mute, interrupción, estado,
+  transcript, texto en la misma sesión, confirmaciones, ayuda de permisos,
+  reconexión y privacidad visible.
+- Ante ausencia de clave, red o permiso/dispositivo, el fallback explícito es
+  mock/texto y nunca se presenta como voz real.
+- El dictado preexistente queda separado y rotulado como `Dictar`; no se
+  confunde con la consola conversacional.
+
+### Documentación oficial consultada
+
+- OpenAI Realtime API con WebRTC: flujo unificado browser SDP → backend →
+  `/v1/realtime/calls`, y data channel para eventos.
+- Realtime conversations: configuración de sesión, transcripción, function
+  calling, cancelación e interrupción.
+- Voice activity detection: `semantic_vad`.
+- Realtime costs: sesiones acotadas y límites locales de respuestas/tools.
+- La documentación oficial vigente muestra modelos posteriores, pero no se
+  cambió el default sin poder verificar su disponibilidad en esta cuenta.
+
+El helper MCP de documentación oficial no pudo instalarse porque `codex.exe`
+respondió `Acceso denegado`; se usó exclusivamente el sitio oficial
+`developers.openai.com` como fallback permitido.
+
+### Archivos
+
+- Creados:
+  `lib/voice/{contracts,session-service,tool-policy,command-interpreter,audit}.js`,
+  `lib/voice/providers/{voice-provider,openai-realtime-provider,mock-voice-provider}.js`,
+  `assets/js/voice/{voice-console,realtime-client,audio-controller,voice-state,transcript-view}.js`,
+  `assets/css/voice-console.css`,
+  `tests-voice-runtime.js`.
+- Modificados:
+  `server.js`, `lib/runtime-security/contracts.js`,
+  `assets/js/apex-7-runtime.js`, `index.html`, `.env.example`, `.gitignore`,
+  `package.json`, `tests-smoke.js`, `tests-frontend-contract.js`,
+  `docs/APEX_7_1_IMPLEMENTATION_LOG.md`.
+
+### Pruebas
+
+- `npm.cmd run test:voice`: 110 aserciones, exit 0.
+- Casos: permisos, dispositivo, provider ausente/fallido, SDP, estados, mute,
+  interrupción, cancelación, reconexión, doble conexión, expiración, sesión
+  ajena/cerrada, límites, tool duplicada/prohibida, kill switch, draft,
+  evidencia, mock, alternancia voz/texto, redacción, tampering y ausencia de
+  credenciales/ruta privilegiada en browser.
+- `npm.cmd run test:contract`: 219 IDs estáticos, assets de voz, command pipeline
+  normal, cancelación y frontera de credenciales.
+- `npm.cmd run test:smoke`: fallback sin clave, sesión mock, doble conexión,
+  query read-only, tool idempotente/prohibida y cierre.
+- `npm.cmd test`: 11/11 suites, exit 0, duración 38.099 ms.
+- QA visual en navegador local: `ESCUCHANDO` con mock rotulado, consulta PAPER
+  visible, orden live bloqueada, interrupción y retorno a `DESHABILITADA`.
+
+### Riesgos y deuda
+
+- Sin `OPENAI_API_KEY` no fue posible validar una llamada, audio, latencia,
+  consumo o reconexión reales contra la cuenta. El path de red queda probado
+  por contrato/fakes y el producto permanece plenamente cargable en mock/texto.
+- La duración máxima local es 15 minutos, inferior al máximo documentado del
+  servicio. Los límites reducen costo, pero no sustituyen budgets/alertas de la
+  cuenta OpenAI.
+- El navegador puede impedir autoplay hasta una interacción humana; la conexión
+  comienza desde un click y `resumeRemotePlayback()` falla de forma controlada.
+
+### Resultado
+
+`PASS`. Consola constitucional persistente y modular, sin credenciales ni
+ejecución privilegiada en el browser; integración OpenAI real pendiente de una
+cuenta configurada para su verificación operacional.

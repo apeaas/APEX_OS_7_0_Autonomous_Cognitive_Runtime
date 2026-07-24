@@ -13,7 +13,6 @@
   let actionWorkerBusy = false;
   let lastMirroredEventId = sessionStorage.getItem("apex.runtime.lastMirroredEventId") || "";
   let protocolResolve = null;
-  let realtime = { pc: null, dc: null, stream: null, connected: false };
 
   document.addEventListener("DOMContentLoaded", init);
 
@@ -118,7 +117,7 @@
           <label class="checkbox"><input id="cfgAllowAudit" type="checkbox">Autoauditar</label>
           <label class="checkbox"><input id="cfgNotify" type="checkbox">Notificaciones</label>
         </div><div class="runtime-settings-actions"><button id="runtimeDiscardConfig">Descartar</button><button id="runtimeSaveConfig" class="save">Guardar configuración</button></div></div></article>
-        <article class="runtime-card"><div class="runtime-card-head"><div><span>REALTIME VOICE BRIDGE</span><strong>Voz natural beta</strong></div></div><div class="runtime-card-body"><div class="runtime-voice-chip"><button id="runtimeRealtimeVoice">Conectar voz realtime</button><small id="runtimeRealtimeState">Opcional · requiere micrófono y API configurada</small></div><p style="font-size:12px;color:#8197b7;line-height:1.45;margin:10px 0 0">El puente WebRTC es independiente del push-to-talk clásico. Las órdenes operativas siguen pasando por Command Runtime, Risk y Governance.</p></div></article>
+        <article class="runtime-card"><div class="runtime-card-head"><div><span>CONSTITUTIONAL VOICE</span><strong>Consola persistente</strong></div><button data-voice-console-open>Abrir</button></div><div class="runtime-card-body"><p style="font-size:12px;color:#8197b7;line-height:1.45;margin:0">Voz y texto comparten sesión. Toda mutación sigue el pipeline CommandDraft → confirmación visual → Risk → Governance → PAPER.</p></div></article>
       </div>`;
     operationsGrid.prepend(section);
   }
@@ -154,7 +153,6 @@
     byId("runtimeSaveConfig")?.addEventListener("click", saveConfig);
     byId("runtimeDiscardConfig")?.addEventListener("click", fillConfig);
     byId("runtimeLoadDefaults")?.addEventListener("click", fillConfig);
-    byId("runtimeRealtimeVoice")?.addEventListener("click", toggleRealtimeVoice);
     byId("runtimeProtocolCancel")?.addEventListener("click", () => finishProtocol(null));
     byId("runtimeProtocolConfirm")?.addEventListener("click", () => finishProtocol(byId("runtimeProtocolInput")?.value || ""));
     byId("runtimeProtocolInput")?.addEventListener("keydown", event => { if (event.key === "Enter") finishProtocol(event.target.value); if (event.key === "Escape") finishProtocol(null); });
@@ -412,51 +410,6 @@
     const records = buckets.flatMap(bucket => (memory[bucket] || []).filter(item => JSON.stringify(item).toLowerCase().includes(String(args.query || "").toLowerCase())).slice(0, args.limit || 8));
     if (!records.length && !events.length) return `No encontré coincidencias persistidas para “${args.query}”.`;
     return [...records.slice(0, 6).map(item => `${item.timestamp || ""} · ${item.decision || item.title || item.eventType || item.autonomyState || "memoria"}`), ...events.slice(0, 6).map(item => `${item.type} · ${item.symbol || item.source}`)].join("\n");
-  }
-
-  async function toggleRealtimeVoice() {
-    if (realtime.connected) return disconnectRealtimeVoice();
-    const button = byId("runtimeRealtimeVoice");
-    try {
-      button.disabled = true; setText("runtimeRealtimeState", "Solicitando micrófono...");
-      const pc = new RTCPeerConnection();
-      const audio = document.createElement("audio"); audio.autoplay = true; audio.hidden = true; document.body.appendChild(audio);
-      pc.ontrack = event => { audio.srcObject = event.streams[0]; };
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stream.getTracks().forEach(track => pc.addTrack(track, stream));
-      const dc = pc.createDataChannel("oai-events");
-      dc.onopen = () => { realtime.connected = true; button.classList.add("connected"); setText("runtimeRealtimeState", "Conectada · voz natural online"); button.textContent = "Desconectar voz"; };
-      dc.onmessage = event => handleRealtimeEvent(event.data);
-      dc.onclose = () => disconnectRealtimeVoice();
-      const offer = await pc.createOffer(); await pc.setLocalDescription(offer);
-      const response = await fetch("/api/realtime/call", { method: "POST", headers: { "Content-Type": "application/sdp" }, body: offer.sdp });
-      if (!response.ok) throw new Error((await response.text()).slice(0, 300) || "No se creó la llamada realtime.");
-      await pc.setRemoteDescription({ type: "answer", sdp: await response.text() });
-      realtime = { pc, dc, stream, connected: true, audio };
-    } catch (error) { setText("runtimeRealtimeState", error.message); disconnectRealtimeVoice(); }
-    finally { button.disabled = false; }
-  }
-
-  function handleRealtimeEvent(raw) {
-    try {
-      const event = JSON.parse(raw);
-      if (event.type === "conversation.item.input_audio_transcription.completed" && event.transcript) {
-        setText("voiceTranscript", event.transcript);
-        emit("REALTIME_VOICE_TRANSCRIPT", { transcript: event.transcript }, { source: "REALTIME_VOICE", category: "dialogue", severity: "info" });
-      }
-      if (event.type === "error") setText("runtimeRealtimeState", event.error?.message || "Error realtime");
-    } catch { /* ignore */ }
-  }
-
-  function disconnectRealtimeVoice() {
-    realtime.stream?.getTracks?.().forEach(track => track.stop());
-    try { realtime.dc?.close(); } catch {}
-    try { realtime.pc?.close(); } catch {}
-    realtime.audio?.remove?.();
-    realtime = { pc: null, dc: null, stream: null, connected: false };
-    const button = byId("runtimeRealtimeVoice");
-    if (button) { button.classList.remove("connected"); button.textContent = "Conectar voz realtime"; }
-    setText("runtimeRealtimeState", "Desconectada");
   }
 
   function renderAll() {

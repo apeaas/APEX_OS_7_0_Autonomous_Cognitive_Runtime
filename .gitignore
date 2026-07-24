@@ -12,6 +12,7 @@ data/apex-paper-snapshot.json
 data/apex-active-constitution.json
 data/apex-improvement-audit.ndjson
 data/apex-decision-journal.ndjson
+data/apex-voice-audit.ndjson
 *.log
 .DS_Store
 Thumbs.db

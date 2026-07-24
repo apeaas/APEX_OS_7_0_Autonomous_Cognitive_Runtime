@@ -12,7 +12,8 @@
 <link href="assets/css/genesis-god-mode.css" rel="stylesheet"/>
 <link href="assets/css/event-memory.css" rel="stylesheet"/>
 <link href="assets/css/ai-command.css" rel="stylesheet"/>
-<link href="assets/css/apex-7-runtime.css" rel="stylesheet"/></head>
+<link href="assets/css/apex-7-runtime.css" rel="stylesheet"/>
+<link href="assets/css/voice-console.css" rel="stylesheet"/></head>
 <body class="apex-genesis">
 <div class="ambient-grid"></div>
 <div class="app-shell" id="app">
@@ -386,7 +387,7 @@
     <div class="ai-runtime-title"><span class="ai-runtime-orb">A</span><div><strong id="aiRuntimeState">AI · OFFLINE</strong><span>Modelo <b id="aiModelName">—</b> · <em id="aiRuntimePulse">LOCAL</em></span></div></div>
     <div class="ai-runtime-tools">
       <button id="aiArmBtn" type="button">Armar PAPER</button>
-      <button id="aiMicBtn" type="button">Hablar</button>
+      <button id="aiMicBtn" type="button" title="Dictado local, no conversación Realtime">Dictar</button>
       <button id="aiSpeakBtn" type="button">Voz OFF</button>
     </div>
   </div>
@@ -403,7 +404,7 @@
 <button data-chat-prompt="Abrí la memoria y explicame la última decisión.">Memoria + decisión</button>
 </div>
 <div class="chat-input-row ai-upgraded">
-<button aria-label="Dictar comando" class="btn secondary ai-mic" id="chatMicProxy" type="button">◉</button>
+<button aria-label="Dictar comando local; no inicia conversación Realtime" class="btn secondary ai-mic" id="chatMicProxy" type="button">◉</button>
 <input aria-label="Comandá APEX" autocomplete="off" id="chatInput" placeholder="Ej.: cerrá la mitad de ETH y explicame el impacto..." type="text">
 <button class="btn primary" id="sendChatBtn">Enviar</button>
 </input></div>
@@ -470,5 +471,10 @@
 <script src="assets/js/genesis-god-mode.js"></script>
 <script src="assets/js/apex-memory-ui.js"></script>
 <script src="assets/js/apex-ai-command.js"></script>
-<script src="assets/js/apex-7-runtime.js"></script></body>
+<script src="assets/js/apex-7-runtime.js"></script>
+<script src="assets/js/voice/voice-state.js"></script>
+<script src="assets/js/voice/audio-controller.js"></script>
+<script src="assets/js/voice/realtime-client.js"></script>
+<script src="assets/js/voice/transcript-view.js"></script>
+<script src="assets/js/voice/voice-console.js"></script></body>
 </html>

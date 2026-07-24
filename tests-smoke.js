@@ -96,6 +96,50 @@ child.stdout.on("data", async chunk => {
     const decisionJournal = await fetch(`${base}/api/decision-journal`).then(r => r.json());
     if (!decisionJournal.ok || !Array.isArray(decisionJournal.entries)) throw new Error("Decision Journal no disponible");
 
+    const voiceHealth = await fetch(`${base}/api/voice/health`).then(r => r.json());
+    if (!voiceHealth.ok || voiceHealth.defaultProvider !== "mock" || voiceHealth.rawAudioStored !== false || voiceHealth.apiKeyExposed !== false) {
+      throw new Error("Voice health sin fallback seguro");
+    }
+    const voiceCreation = await securedFetch("/api/voice/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ preferredProvider: "openai-realtime" }),
+    });
+    const voiceCreationBody = await voiceCreation.json();
+    if (voiceCreation.status !== 201 || voiceCreationBody.session.provider !== "mock" || voiceCreationBody.session.fallbackReason !== "OPENAI_NOT_CONFIGURED") {
+      throw new Error("Fallback de voz sin API key inválido");
+    }
+    if (JSON.stringify(voiceCreationBody).includes("OPENAI_API_KEY") || JSON.stringify(voiceCreationBody).includes("Bearer ")) {
+      throw new Error("Voice session expuso material de credenciales");
+    }
+    const duplicateVoice = await securedFetch("/api/voice/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ preferredProvider: "mock" }),
+    });
+    if (duplicateVoice.status !== 409) throw new Error("Voice permitió doble conexión");
+    const voiceTool = {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ callId: "smoke-tool-1", name: "get_runtime_status", arguments: {} }),
+    };
+    const voiceToolResult = await securedFetch(`/api/voice/sessions/${voiceCreationBody.session.id}/tools`, voiceTool).then(r => r.json());
+    if (voiceToolResult.kind !== "read_only" || voiceToolResult.result.executionMode !== "PAPER_ONLY") throw new Error("Voice tool read-only inválida");
+    const duplicateVoiceTool = await securedFetch(`/api/voice/sessions/${voiceCreationBody.session.id}/tools`, voiceTool).then(r => r.json());
+    if (!duplicateVoiceTool.duplicate) throw new Error("Voice tool duplicada produjo un segundo efecto");
+    const forbiddenVoiceTool = await securedFetch(`/api/voice/sessions/${voiceCreationBody.session.id}/tools`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ callId: "smoke-tool-2", name: "execute_trade", arguments: {} }),
+    });
+    if (forbiddenVoiceTool.status !== 403) throw new Error("Voice tool prohibida no fue bloqueada");
+    const voiceDisconnect = await securedFetch(`/api/voice/sessions/${voiceCreationBody.session.id}/disconnect`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    }).then(r => r.json());
+    if (voiceDisconnect.session?.state !== "disabled") throw new Error("Voice session no cerró correctamente");
+
     for (const secretPath of ["/.env", "/server.js", "/data/apex-runtime-state.json", "/data/apex-market-cache.json"]) {
       const response = await fetch(`http://127.0.0.1:${port}${secretPath}`);
       if (response.status !== 404) throw new Error(`El servidor expuso ${secretPath}`);
