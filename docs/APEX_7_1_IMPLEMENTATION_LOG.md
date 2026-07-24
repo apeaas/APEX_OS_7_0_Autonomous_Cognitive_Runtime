@@ -181,3 +181,86 @@ el lifecycle de acciones requiera un claim criptográfico ligado a sesión.
 ### Resultado
 
 `PASS`. Runtime endurecido, browser actualizado y suite completa en verde.
+
+## Gate 2 — Canonical PAPER Ledger and Portfolio Projection
+
+### Objetivo
+
+Convertir el backend en la única autoridad de cash, equity, PnL y posiciones
+PAPER mediante eventos append-only, proyección reproducible e importación única
+del estado heredado.
+
+### Implementación
+
+- `EventStore` NDJSON append-only con `fsync`, schema, idempotency key única y
+  cadena SHA-256 enlazada por `previousChecksum`.
+- Una corrupción intermedia o checksum alterado aborta en modo fail-safe.
+- Una escritura final truncada se copia a backup de evidencia y se recupera
+  únicamente hasta el último evento íntegro antes de admitir nuevos appends.
+- Separación explícita de commands, events, projections y queries.
+- Eventos implementados:
+  `portfolio_initialized`, `legacy_portfolio_imported`,
+  `paper_order_submitted`, `paper_order_filled`,
+  `paper_position_modified`, `paper_position_closed`,
+  `paper_cash_adjusted` y los contratos reservados del fondo para Gate 3.
+- Cada evento contiene todos los campos constitucionales de auditoría y su
+  bloque de integridad.
+- Proyección determinística con cash, equity, realized/unrealized PnL,
+  posiciones, exposición bruta/neta/por símbolo, fondos, high-water mark,
+  drawdown, versión y último evento/checksum aplicados.
+- Marks de mercado son overlays read-only y sólo se aplican si el gateway es
+  trusted; no se convierten en una segunda contabilidad.
+- Snapshot atómico con checksum. Es descartable: un snapshot corrupto se ignora
+  y el estado siempre se reconstruye desde el ledger.
+- Command API:
+  `POST /api/paper/commands`; queries:
+  `GET /api/portfolio`, `GET /api/portfolio/events`.
+- Idempotencia sin segundo efecto, versionado optimista para concurrencia y
+  rechazo de cierre doble, posición duplicada, cash insuficiente y números no
+  finitos.
+- Migración:
+  `POST /api/portfolio/import`, validación completa, fingerprint SHA-256,
+  conflicto explícito y evento único `legacy_portfolio_imported`.
+- El browser detecta `apex-portfolio`, solicita confirmación, importa, archiva
+  una copia marcada `operational:false` y elimina la clave operativa.
+- `assets/js/app.js` ya no carga, guarda ni modifica contabilidad en
+  `localStorage`; todas las aperturas, modificaciones y cierres usan command API.
+- El backend descarta el portfolio incluido en snapshots del browser y usa la
+  proyección canónica para IA, autonomía y resúmenes del runtime.
+- El reset destructivo del browser fue sustituido por un rechazo append-only.
+
+### Archivos
+
+- Creados:
+  `lib/paper-ledger/contracts.js`, `event-store.js`, `projector.js`,
+  `commands.js`, `queries.js`, `snapshots.js`, `migration.js`,
+  `lib/portfolio/projection.js`, `validators.js`,
+  `assets/js/paper-portfolio-client.js`, `tests-paper-ledger.js`.
+- Modificados:
+  `server.js`, `assets/js/app.js`, `assets/js/apex-7-runtime.js`,
+  `index.html`, `package.json`, `.gitignore`, `tests-smoke.js`,
+  `tests-runtime.js`, `tests-frontend-contract.js`,
+  `lib/runtime-security/contracts.js`.
+
+### Pruebas
+
+- Ledger: 32 aserciones sobre evento/idempotency duplicados, cierre/PnL doble,
+  replay, reinicio, snapshot corrupto, tail truncado, checksum alterado,
+  importación repetida/parcial/conflictiva, números no finitos, posición
+  imposible/duplicada y conflicto de versión concurrente.
+- Smoke: inicialización, query, command API y repetición idempotente.
+- Frontend contract: cliente canónico cargado antes de `app.js` y ausencia de
+  lectura/escritura operativa de `apex-portfolio`.
+- `npm.cmd test`: 7/7 suites OK, exit 0, duración 21.993 ms.
+
+### Riesgos y deuda
+
+- El ledger local usa exclusión por proceso y el event loop de Node; ejecutar dos
+  procesos contra el mismo `APEX_DATA_DIR` no está soportado.
+- El overlay de PnL no realizado depende de market data trusted y no se persiste.
+- La autorización Risk/Governance previa a command API se centraliza en Gate 3/4.
+
+### Resultado
+
+`PASS`. Ledger canónico, migración y frontend proyectado con suite completa en
+verde.

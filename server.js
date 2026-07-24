@@ -16,6 +16,10 @@ const { parseJsonBody, validatePayload } = require("./lib/runtime-security/contr
 const { MutableRequestGuard } = require("./lib/runtime-security/mutable-request-guard");
 const { SlidingWindowRateLimiter } = require("./lib/runtime-security/rate-limiter");
 const { SessionManager } = require("./lib/runtime-security/session-manager");
+const { EventStore } = require("./lib/paper-ledger/event-store");
+const { PaperLedgerCommands } = require("./lib/paper-ledger/commands");
+const { PaperLedgerQueries } = require("./lib/paper-ledger/queries");
+const { SnapshotStore } = require("./lib/paper-ledger/snapshots");
 const marketQuality = require("./assets/js/market-quality");
 
 const ROOT = __dirname;
@@ -33,6 +37,8 @@ const STATE_FILE = path.join(DATA_DIR, "apex-runtime-state.json");
 const RUNTIME_EVENTS_FILE = path.join(DATA_DIR, "apex-runtime-events.ndjson");
 const CLIENT_EVENTS_FILE = path.join(DATA_DIR, "apex-client-events.ndjson");
 const MARKET_CACHE_FILE = path.join(DATA_DIR, "apex-market-cache.json");
+const PAPER_LEDGER_FILE = path.join(DATA_DIR, "apex-paper-ledger.ndjson");
+const PAPER_SNAPSHOT_FILE = path.join(DATA_DIR, "apex-paper-snapshot.json");
 const AUTONOMY_SPEC = readJsonFile(path.join(ROOT, "config", "apex_autonomy.json"), {});
 const INTEGRATION_SPEC = readJsonFile(path.join(ROOT, "config", "apex_integrations.json"), {});
 const HUMAN_AUTONOMY_CEILING_PCT = 5;
@@ -45,6 +51,11 @@ const marketGateway = new MarketDataGateway({
   cacheFile: MARKET_CACHE_FILE,
   eventSink: (eventType, payload, severity) => appendRuntimeEvent(eventType, payload, severity),
 });
+const paperEventStore = new EventStore({ filePath: PAPER_LEDGER_FILE });
+const paperSnapshotStore = new SnapshotStore({ filePath: PAPER_SNAPSHOT_FILE });
+const paperCommands = new PaperLedgerCommands({ store: paperEventStore, snapshots: paperSnapshotStore });
+paperCommands.initialize(Number(process.env.APEX_PAPER_INITIAL_CASH || 25_000));
+const paperQueries = new PaperLedgerQueries({ store: paperEventStore });
 const sessionManager = new SessionManager({
   ttlMs: Number(process.env.APEX_SESSION_TTL_MS || 20 * 60 * 1000),
 });
@@ -238,6 +249,17 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/api/integrations") return sendJson(res, 200, integrationPayload());
     if (req.method === "GET" && url.pathname === "/api/market/status") return sendJson(res, 200, marketGateway.status());
     if (req.method === "GET" && url.pathname === "/api/market/snapshot") return sendJson(res, 200, marketGateway.snapshot());
+    if (req.method === "GET" && url.pathname === "/api/portfolio") {
+      return sendJson(res, 200, {
+        ok: true,
+        projection: paperQueries.portfolio(trustedMarketPrices()),
+        migration: paperQueries.migration(),
+        integrity: paperQueries.integrity(),
+      });
+    }
+    if (req.method === "GET" && url.pathname === "/api/portfolio/events") {
+      return sendJson(res, 200, { ok: true, events: paperQueries.events(url.searchParams.get("limit")) });
+    }
     if (req.method === "GET" && url.pathname === "/api/market/history") {
       const symbol = normalizeSymbol(url.searchParams.get("symbol"));
       const history = marketGateway.history(symbol);
@@ -253,6 +275,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && url.pathname === "/api/runtime/snapshot") {
       const payload = await readJson(req);
       runtime.snapshot = sanitizeSnapshot(payload?.snapshot || payload || {});
+      delete runtime.snapshot.portfolio;
       runtime.snapshotReceivedAt = new Date().toISOString();
       runtime.client = { ...(runtime.client || {}), ...(payload?.client || {}) };
       saveRuntime();
@@ -316,6 +339,25 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, exportRuntimeSnapshot());
     }
 
+    if (req.method === "POST" && url.pathname === "/api/paper/commands") {
+      const payload = await readJson(req);
+      const result = paperCommands.execute(payload, paperCommandContext(req, payload));
+      return sendJson(res, 200, result);
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/portfolio/import") {
+      const payload = await readJson(req);
+      const result = paperCommands.execute({
+        type: "import_legacy_portfolio",
+        portfolio: payload.portfolio,
+        expectedVersion: payload.expectedVersion,
+      }, paperCommandContext(req, payload));
+      return sendJson(res, 200, {
+        ...result,
+        checksum: paperEventStore.last()?.integrity?.checksum || null,
+      });
+    }
+
     if (req.method === "POST" && url.pathname === "/api/realtime/call") {
       if (!OPENAI_API_KEY) return sendJson(res, 503, { error: "AI_RUNTIME_NOT_CONFIGURED" });
       const sdp = await readText(req, req.apexSecurity.maxBytes);
@@ -330,7 +372,7 @@ const server = http.createServer(async (req, res) => {
   } catch (error) {
     console.error("[APEX]", error);
     appendRuntimeEvent("RUNTIME_ERROR", { message: safeError(error) }, "error");
-    return sendJson(res, error.statusCode || 500, { error: "APEX_RUNTIME_ERROR", message: safeError(error) });
+    return sendJson(res, error.statusCode || 500, { error: error.code || "APEX_RUNTIME_ERROR", message: safeError(error) });
   }
 });
 
@@ -353,7 +395,7 @@ server.listen(PORT, HOST, () => {
         console.error(`Market Data Gateway: ${safeError(error)}`);
       });
   }
-  appendRuntimeEvent("SYSTEM_BOOT", { version: "7.0.0", mode: runtime.mode, restoredQueue: runtime.queue.length, restoredPlans: runtime.plans.length }, "success");
+  appendRuntimeEvent("SYSTEM_BOOT", { version: "7.1.0", mode: runtime.mode, restoredQueue: runtime.queue.length, restoredPlans: runtime.plans.length, paperLedgerEvents: paperQueries.integrity().eventCount }, "success");
   console.log(`\nAPEX OS 7.0 disponible en http://${HOST}:${PORT}`);
   console.log(`Cognitive Runtime: ${OPENAI_API_KEY ? "CONFIGURADO" : "SIN CLAVE · local only"}`);
   console.log(`Model: ${OPENAI_MODEL} · Realtime: ${OPENAI_REALTIME_MODEL}`);
@@ -369,6 +411,7 @@ async function handleAssistant(payload) {
   const prompt = String(payload?.prompt || "").trim().slice(0, 10000);
   if (!prompt) throw badRequest("Prompt vacío.");
   const state = sanitizeSnapshot(payload?.state || {});
+  state.portfolio = paperQueries.portfolio(trustedMarketPrices());
   const history = Array.isArray(payload?.history) ? payload.history.slice(-16).map(item => ({ role: item?.role === "assistant" ? "assistant" : "user", content: String(item?.content || "").slice(0, 4000) })) : [];
   const runtimeContext = publicRuntimeState();
   const input = [...history, { role: "user", content: `SOLICITUD DEL OPERADOR:\n${prompt}\n\nSNAPSHOT APEX CLIENTE:\n${JSON.stringify(state)}\n\nCOGNITIVE RUNTIME:\n${JSON.stringify(runtimeContext)}` }];
@@ -430,7 +473,7 @@ async function evaluateAutonomousCycle(options = {}) {
   appendRuntimeEvent("AUTONOMOUS_CYCLE_STARTED", { manual: Boolean(options.manual), reason: options.reason, snapshotAgeSeconds: ageSeconds }, "info");
 
   try {
-    const context = { snapshot: runtime.snapshot, runtime: runtimeSummary(), config: runtime.config, activePlans: runtime.plans.filter(plan => plan.status === "active").slice(0, 10), recentActions: runtime.history.slice(0, 20) };
+    const context = { snapshot: canonicalRuntimeSnapshot(), runtime: runtimeSummary(), config: runtime.config, activePlans: runtime.plans.filter(plan => plan.status === "active").slice(0, 10), recentActions: runtime.history.slice(0, 20) };
     const response = await openAIResponse({ model: OPENAI_MODEL, instructions: AUTONOMY_INSTRUCTIONS, input: [{ role: "user", content: `Evaluá el ciclo actual. Elegí exactamente una herramienta.\n${JSON.stringify(context)}` }], tools: AUTONOMY_TOOLS, tool_choice: "required" });
     const call = extractFunctionCalls(response)[0];
     if (!call) return scheduleNoop("El modelo no devolvió una acción estructurada.");
@@ -484,7 +527,7 @@ function validateAndQueueAutonomousAction(name, args) {
 function validateAutonomousPolicy(name, args) {
   if (runtime.mode !== "paper_autonomous") return { ok: false, message: "Modo autónomo no habilitado." };
   if (runtime.emergencyStop) return { ok: false, message: "Kill switch activo." };
-  const snapshot = runtime.snapshot || {};
+  const snapshot = canonicalRuntimeSnapshot();
   if (name !== "run_governance_audit") {
     const feedAction = name === "execute_paper_trade" ? "paper_open" : name === "close_paper_position" ? "paper_close" : "paper_modify";
     const feedGate = marketQuality.gate(feedAction, snapshot.feedQuality);
@@ -714,14 +757,42 @@ function publicRuntimeState() {
 }
 
 function runtimeSummary() {
-  const positions = runtime.snapshot?.portfolio?.positions || [];
-  const equity = Number(runtime.snapshot?.portfolio?.equity || 0);
-  const exposure = positions.reduce((sum, item) => sum + Number(item.capital || 0), 0);
+  const portfolio = paperQueries.portfolio(trustedMarketPrices());
+  const positions = portfolio.positions;
+  const equity = Number(portfolio.equity || 0);
+  const exposure = Number(portfolio.exposure?.gross || 0);
   return { mode: runtime.mode, emergencyStop: runtime.emergencyStop, cycleStatus: runtime.cycleStatus, configured: Boolean(OPENAI_API_KEY), lastCycleAt: runtime.lastCycleAt, nextCycleAt: runtime.nextCycleAt, snapshotReceivedAt: runtime.snapshotReceivedAt, snapshotFresh: isSnapshotFresh(), queueCount: runtime.queue.filter(item => ["queued", "claimed"].includes(item.status)).length, activePlanCount: runtime.plans.filter(item => item.status === "active").length, autonomyCapPct: runtime.config.autonomyCapPct, equity, currentExposure: exposure, autonomousBudget: equity * runtime.config.autonomyCapPct / 100, remainingAutonomousBudget: Math.max(0, equity * runtime.config.autonomyCapPct / 100 - exposure) };
 }
 
 function healthPayload() {
-  return { ok: true, service: "APEX Autonomous Cognitive Runtime", version: "7.0.0", model: OPENAI_MODEL, realtimeModel: OPENAI_REALTIME_MODEL, configured: Boolean(OPENAI_API_KEY), executionMode: "PAPER_ONLY", externalAccounts: false, liveTrading: false, mode: runtime.mode, emergencyStop: runtime.emergencyStop, dataStore: "local-json+ndjson", marketData: marketGateway.status(), uptimeSeconds: Math.round(process.uptime()) };
+  return { ok: true, service: "APEX Constitutional Cognitive Voice Runtime", version: "7.1.0", model: OPENAI_MODEL, realtimeModel: OPENAI_REALTIME_MODEL, configured: Boolean(OPENAI_API_KEY), executionMode: "PAPER_ONLY", externalAccounts: false, liveTrading: false, mode: runtime.mode, emergencyStop: runtime.emergencyStop, dataStore: "append-only-paper-ledger+local-runtime-json", paperLedger: paperQueries.integrity(), marketData: marketGateway.status(), uptimeSeconds: Math.round(process.uptime()) };
+}
+
+function canonicalRuntimeSnapshot() {
+  return {
+    ...(runtime.snapshot || {}),
+    portfolio: paperQueries.portfolio(trustedMarketPrices()),
+  };
+}
+
+function trustedMarketPrices() {
+  const status = marketGateway.status();
+  if (!status.quality?.trusted) return {};
+  const snapshot = marketGateway.snapshot();
+  return Object.fromEntries(Object.entries(snapshot.symbols || {}).map(([symbol, value]) => [symbol, value?.ticker?.price]).filter(([, price]) => Number.isFinite(Number(price)) && Number(price) > 0));
+}
+
+function paperCommandContext(req, payload = {}) {
+  return {
+    idempotencyKey: req.apexSecurity.idempotencyKey,
+    sessionId: req.apexSecurity.session.sessionId,
+    actor: { type: "human_operator", id: req.apexSecurity.session.sessionId },
+    authority: "human_operator",
+    correlationId: String(payload.correlationId || req.apexSecurity.idempotencyKey).slice(0, 160),
+    causationId: String(payload.causationId || req.apexSecurity.idempotencyKey).slice(0, 160),
+    policyVersion: "paper-ledger.v1",
+    killSwitch: runtime.emergencyStop,
+  };
 }
 
 function integrationPayload() {
@@ -819,6 +890,7 @@ function loadRuntimeState() {
   merged.queue = Array.isArray(merged.queue) ? merged.queue : [];
   merged.history = Array.isArray(merged.history) ? merged.history : [];
   merged.plans = Array.isArray(merged.plans) ? merged.plans : [];
+  if (merged.snapshot && typeof merged.snapshot === "object") delete merged.snapshot.portfolio;
   return merged;
 }
 

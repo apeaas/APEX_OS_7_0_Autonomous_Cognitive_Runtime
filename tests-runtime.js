@@ -28,7 +28,7 @@ const mock = http.createServer((req, res) => {
 });
 
 mock.listen(mockPort, "127.0.0.1", () => {
-  const apex = spawn(process.execPath, ["server.js"], { cwd: __dirname, env: { ...process.env, APEX_PORT: String(apexPort), APEX_DATA_DIR: dataDir, APEX_MARKET_GATEWAY_DISABLED: "1", OPENAI_API_KEY: "test-key-not-real", OPENAI_BASE_URL: `http://127.0.0.1:${mockPort}/v1`, OPENAI_MODEL: "mock-model" }, stdio: ["ignore", "pipe", "pipe"] });
+  const apex = spawn(process.execPath, ["server.js"], { cwd: __dirname, env: { ...process.env, APEX_PORT: String(apexPort), APEX_DATA_DIR: dataDir, APEX_PAPER_INITIAL_CASH: "10000", APEX_MARKET_GATEWAY_DISABLED: "1", OPENAI_API_KEY: "test-key-not-real", OPENAI_BASE_URL: `http://127.0.0.1:${mockPort}/v1`, OPENAI_MODEL: "mock-model" }, stdio: ["ignore", "pipe", "pipe"] });
   const timeout = setTimeout(() => finish(new Error("Runtime test timeout")), 18000);
   let finished = false;
   apex.stdout.on("data", async chunk => {

@@ -37,13 +37,13 @@ document.addEventListener("DOMContentLoaded", () => {
     strategies: {},
     watchlist: load("apex-watchlist", []),
     ignoredUntil: load("apex-ignoredUntil", {}),
-    portfolio: load("apex-portfolio", {
+    portfolio: {
       equity: 25000,
       cash: 25000,
       realized: 0,
       positions: [],
       closedTrades: []
-    }),
+    },
     bots: load("apex-bots", [
       { id: "sentinel", name: "Sentinela", desc: "Monitoreo y alertas", active: true, last: "Supervisando mercado" },
       { id: "spot-hunter", name: "Spot Hunter", desc: "Setups spot con aprobación", active: true, last: "Escaneando oportunidades" },
@@ -94,16 +94,39 @@ document.addEventListener("DOMContentLoaded", () => {
     bindUI();
     renderBots();
     renderPortfolio();
+    hydrateCanonicalPortfolio();
     hydrateMarketHistory().finally(connectMarketDataGateway);
     setInterval(simulateBotsAndChecks, 6000);
     setInterval(checkOpenPositions, 3000);
-    if (state.portfolio.positions.length) log("Sistema", "Restauración de posiciones paper", "OK");
     emitEvent("APPLICATION_READY", {
       version: "7.0.0",
       feedMode: "REAL_DATA",
       executionMode: "PAPER_ONLY",
       restoredPositions: state.portfolio.positions.length
     }, { source: "APEX_CORE", category: "system", severity: "success" });
+  }
+
+  async function hydrateCanonicalPortfolio() {
+    const client = window.APEX_PAPER_PORTFOLIO;
+    if (!client) {
+      log("Ledger", "Cliente PAPER canónico no disponible", "ERROR");
+      return;
+    }
+    client.subscribe(projection => {
+      state.portfolio = projection;
+      renderPortfolio();
+      emitEvent("PAPER_PORTFOLIO_PROJECTED", {
+        version: projection.version,
+        lastEventApplied: projection.lastEventApplied,
+        positionCount: projection.positions.length,
+      }, { source: "PAPER_LEDGER", category: "execution", severity: "info" });
+    });
+    try {
+      const restored = await client.start();
+      if (restored.positions.length) log("Ledger", "Posiciones PAPER reconstruidas desde backend", "OK");
+    } catch (error) {
+      log("Ledger", error.message, "ERROR");
+    }
   }
 
   function bindUI() {
@@ -685,7 +708,7 @@ document.addEventListener("DOMContentLoaded", () => {
     return marketQuality?.gate?.(action, state.feedQuality) || { ok: Boolean(state.feedQuality?.trusted), message: "Datos de mercado no confiables." };
   }
 
-  function validateOrExecuteTicket() {
+  async function validateOrExecuteTicket() {
     const symbol = els.tradeDrawer.dataset.symbol || state.focusSymbol;
     const capital = Number(els.capitalInput.value);
     const entry = Number(els.entryInput.value);
@@ -721,19 +744,26 @@ document.addEventListener("DOMContentLoaded", () => {
       return showTicket("approved", "APROBADA POR RISK ENGINE", `Capital ${money(capital)} · Riesgo estimado ${money(riskAmt)} · Operación lista.`);
     }
 
-    const id = "P" + Date.now().toString().slice(-6);
-    state.portfolio.cash -= capital;
-    state.portfolio.positions.unshift({ id, symbol, capital, entry, stop, target, openedAt: Date.now() });
-    showTicket("executed", "ORDEN PAPER EJECUTADA", `${id} · ${SYMBOLS[symbol].label} · ${money(capital)} · Estado ABIERTA`);
-    els.validateTradeBtn.textContent = "OPERACIÓN EJECUTADA";
-    els.validateTradeBtn.disabled = true;
-    state.ticketExecuted = true;
-    emitEvent("PAPER_TRADE_OPENED", {
-      tradeId: id, symbol, capital, entry, stop, target,
-      executionMode: "PAPER_ONLY"
-    }, { source: "EXECUTION", category: "execution", severity: "success", symbol, correlationId: id });
-    log("Trade", `Orden paper abierta en ${SYMBOLS[symbol].short}`, "OPEN");
-    renderPortfolio(); persist();
+    try {
+      els.validateTradeBtn.disabled = true;
+      const result = await window.APEX_PAPER_PORTFOLIO.open({
+        symbol, capital, entry, stop, target, source: "MANUAL_TICKET",
+      });
+      const id = result.positionId;
+      showTicket("executed", "ORDEN PAPER EJECUTADA", `${id} · ${SYMBOLS[symbol].label} · ${money(capital)} · Estado ABIERTA`);
+      els.validateTradeBtn.textContent = "OPERACIÓN EJECUTADA";
+      state.ticketExecuted = true;
+      emitEvent("PAPER_TRADE_OPENED", {
+        tradeId: id, symbol, capital, entry, stop, target,
+        ledgerVersion: result.projection.version,
+        executionMode: "PAPER_ONLY"
+      }, { source: "PAPER_LEDGER", category: "execution", severity: "success", symbol, correlationId: id });
+      log("Trade", `Orden PAPER ${id} registrada en ledger`, "OPEN");
+    } catch (error) {
+      els.validateTradeBtn.disabled = false;
+      state.ticketValidated = false;
+      showTicket("rejected", "OPERACIÓN RECHAZADA", error.message);
+    }
   }
 
   function showTicket(type, title, msg) {
@@ -762,25 +792,22 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  function closePosition(id, reason) {
-    const idx = state.portfolio.positions.findIndex(p => p.id === id);
-    if (idx < 0) return;
-    const pos = state.portfolio.positions[idx];
-    const current = state.symbols[pos.symbol]?.price || pos.entry;
-    const pnl = ((current - pos.entry) / pos.entry) * pos.capital;
-    state.portfolio.positions.splice(idx, 1);
-    state.portfolio.cash += pos.capital + pnl;
-    state.portfolio.realized += pnl;
-    state.portfolio.equity = state.portfolio.cash + state.portfolio.positions.reduce((s,p)=>s+p.capital,0);
-    state.portfolio.closedTrades.unshift({
-      id: pos.id, symbol: pos.symbol, capital: pos.capital, entry: pos.entry, exit: current, pnl, reason, closedAt: Date.now()
-    });
-    emitEvent("PAPER_TRADE_CLOSED", {
-      tradeId: pos.id, symbol: pos.symbol, capital: pos.capital, entry: pos.entry,
-      exit: current, pnl, reason, executionMode: "PAPER_ONLY"
-    }, { source: "EXECUTION", category: "execution", severity: pnl >= 0 ? "success" : "warning", symbol: pos.symbol, correlationId: pos.id });
-    log("Trade", `${SYMBOLS[pos.symbol].short} cerrada por ${reason} · ${money(pnl)}`, pnl >= 0 ? "WIN" : "LOSS");
-    renderPortfolio(); persist();
+  async function closePosition(id, reason) {
+    const pos = state.portfolio.positions.find(position => position.id === id);
+    if (!pos) return;
+    const current = state.symbols[pos.symbol]?.price;
+    if (!(current > 0)) return;
+    try {
+      const result = await window.APEX_PAPER_PORTFOLIO.close({ positionId: id, fraction: 1, exit: current, reason });
+      emitEvent("PAPER_TRADE_CLOSED", {
+        tradeId: pos.id, symbol: pos.symbol, exit: current,
+        pnl: result.realizedPnL, reason, ledgerVersion: result.projection.version,
+        executionMode: "PAPER_ONLY"
+      }, { source: "PAPER_LEDGER", category: "execution", severity: result.realizedPnL >= 0 ? "success" : "warning", symbol: pos.symbol, correlationId: pos.id });
+      log("Trade", `${SYMBOLS[pos.symbol].short} cerrada por ${reason} · ${money(result.realizedPnL)}`, result.realizedPnL >= 0 ? "WIN" : "LOSS");
+    } catch (error) {
+      log("Ledger", `No se pudo cerrar ${pos.id}: ${error.message}`, "ERROR");
+    }
   }
 
   function toggleWatch(sym) {
@@ -805,11 +832,8 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function resetPaperPortfolio() {
-    if (!confirm("¿Reiniciar portfolio paper y track record?")) return;
-    state.portfolio = { equity: 25000, cash: 25000, realized: 0, positions: [], closedTrades: [] };
-    emitEvent("PAPER_PORTFOLIO_RESET", { equity: 25000, executionMode: "PAPER_ONLY", reason: "Reset manual confirmado" }, { source: "PORTFOLIO", category: "execution", severity: "warning" });
-    log("Sistema", "Portfolio paper reiniciado", "RESET");
-    renderPortfolio(); persist();
+    alert("El ledger PAPER es append-only. Para volver a un estado anterior usá el procedimiento documentado de rollback; el frontend no puede borrar contabilidad.");
+    emitEvent("PAPER_PORTFOLIO_RESET_REJECTED", { reason: "APPEND_ONLY_LEDGER" }, { source: "PAPER_LEDGER", category: "audit", severity: "warning" });
   }
 
   function exportClosedTradesCsv() {
@@ -906,7 +930,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function persist() {
     save("apex-watchlist", state.watchlist);
-    save("apex-portfolio", state.portfolio);
     save("apex-bots", state.bots);
   }
 
@@ -981,7 +1004,7 @@ document.addEventListener("DOMContentLoaded", () => {
         positions: state.portfolio.positions.map(position => ({ ...position, currentPrice: state.symbols[position.symbol]?.price || position.entry })),
         closedTradeCount: state.portfolio.closedTrades.length,
         recentClosedTrades: state.portfolio.closedTrades.slice(0, 8),
-        dailyPnl: state.portfolio.closedTrades.filter(trade => Date.now() - Number(trade.closedAt || 0) < 86400000).reduce((sum, trade) => sum + Number(trade.pnl || 0), 0)
+        dailyPnl: state.portfolio.closedTrades.filter(trade => Date.now() - Date.parse(trade.closedAt || 0) < 86400000).reduce((sum, trade) => sum + Number(trade.pnl || 0), 0)
       },
       agents: state.bots.map(bot => ({ id: bot.id, name: bot.name, active: bot.active, last: bot.last })),
       watchlist: [...state.watchlist],
@@ -1034,7 +1057,7 @@ document.addEventListener("DOMContentLoaded", () => {
     return { ok: true, symbol, message: `Ticket paper preparado para ${SYMBOLS[symbol].label}. Revisalo antes de ejecutar.` };
   }
 
-  function commandExecutePaperTrade(input = {}) {
+  async function commandExecutePaperTrade(input = {}) {
     const symbol = commandResolveSymbol(input.symbol || state.focusSymbol);
     const feedGate = trustedMarketGate("paper_open");
     if (!feedGate.ok) throw new Error(feedGate.message);
@@ -1046,14 +1069,13 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!(entry > stop && target > entry && stop > 0)) throw new Error("La relación entrada / stop / target no es válida para una posición long spot.");
     const riskAmt = capital * ((entry - stop) / entry);
     if (riskAmt > state.portfolio.equity * 0.02) throw new Error("Risk Engine vetó la orden: riesgo mayor al 2% del equity.");
-    const id = "AI" + Date.now().toString().slice(-7);
-    state.portfolio.cash -= capital;
-    state.portfolio.positions.unshift({ id, symbol, capital, entry, stop, target, openedAt: Date.now(), source: "AI_COMMAND" });
-    state.portfolio.equity = state.portfolio.cash + state.portfolio.positions.reduce((sum, position) => sum + position.capital, 0);
-    emitEvent("PAPER_TRADE_OPENED", { tradeId: id, symbol, capital, entry, stop, target, riskAmt, rationale: input.rationale || "", executionMode: "PAPER_ONLY", requestedBy: "AI_COMMAND" }, { source: "EXECUTION", category: "execution", severity: "success", symbol, correlationId: id });
-    log("AI Command", `Orden paper ${id} abierta en ${SYMBOLS[symbol].short}`, "OPEN");
-    renderPortfolio(); persist();
-    return { ok: true, tradeId: id, symbol, riskAmt, message: `Orden PAPER ${id} ejecutada en ${SYMBOLS[symbol].label}. Capital ${money(capital)}; riesgo estimado ${money(riskAmt)}.` };
+    const result = await window.APEX_PAPER_PORTFOLIO.open({
+      symbol, capital, entry, stop, target, source: "AI_COMMAND",
+    });
+    const id = result.positionId;
+    emitEvent("PAPER_TRADE_OPENED", { tradeId: id, symbol, capital, entry, stop, target, riskAmt, rationale: input.rationale || "", ledgerVersion: result.projection.version, executionMode: "PAPER_ONLY", requestedBy: "AI_COMMAND" }, { source: "PAPER_LEDGER", category: "execution", severity: "success", symbol, correlationId: id });
+    log("AI Command", `Orden PAPER ${id} registrada en ledger`, "OPEN");
+    return { ok: true, tradeId: id, symbol, riskAmt, ledgerVersion: result.projection.version, message: `Orden PAPER ${id} ejecutada en ${SYMBOLS[symbol].label}. Capital ${money(capital)}; riesgo estimado ${money(riskAmt)}.` };
   }
 
   function commandFindPosition(input = {}) {
@@ -1070,27 +1092,24 @@ document.addEventListener("DOMContentLoaded", () => {
     return matches[0];
   }
 
-  function commandClosePaperPosition(input = {}) {
+  async function commandClosePaperPosition(input = {}) {
     const position = commandFindPosition(input);
     const feedGate = trustedMarketGate("paper_close");
     if (!feedGate.ok) throw new Error(feedGate.message);
     const fraction = Math.max(0.01, Math.min(1, Number(input.fraction || 1)));
-    const index = state.portfolio.positions.findIndex(item => item.id === position.id);
     const current = state.symbols[position.symbol]?.price || position.entry;
-    const closedCapital = position.capital * fraction;
-    const pnl = ((current - position.entry) / position.entry) * closedCapital;
-    if (fraction >= 0.999) state.portfolio.positions.splice(index, 1);
-    else state.portfolio.positions[index] = { ...position, capital: position.capital - closedCapital };
-    state.portfolio.cash += closedCapital + pnl;
-    state.portfolio.realized += pnl;
-    state.portfolio.equity = state.portfolio.cash + state.portfolio.positions.reduce((sum, item) => sum + item.capital, 0);
-    state.portfolio.closedTrades.unshift({ id: `${position.id}-${Math.round(fraction * 100)}`, parentId: position.id, symbol: position.symbol, capital: closedCapital, entry: position.entry, exit: current, pnl, reason: input.rationale || `AI close ${Math.round(fraction * 100)}%`, closedAt: Date.now() });
-    emitEvent("PAPER_TRADE_CLOSED", { tradeId: position.id, symbol: position.symbol, fraction, capital: closedCapital, entry: position.entry, exit: current, pnl, reason: input.rationale || "AI command", executionMode: "PAPER_ONLY" }, { source: "EXECUTION", category: "execution", severity: pnl >= 0 ? "success" : "warning", symbol: position.symbol, correlationId: position.id });
-    renderPortfolio(); persist();
-    return { ok: true, tradeId: position.id, fraction, pnl, message: `Cerré en PAPER el ${Math.round(fraction * 100)}% de ${SYMBOLS[position.symbol].label}. P&L realizado ${money(pnl)}.` };
+    const result = await window.APEX_PAPER_PORTFOLIO.close({
+      positionId: position.id,
+      fraction,
+      exit: current,
+      reason: input.rationale || `AI close ${Math.round(fraction * 100)}%`,
+    });
+    const pnl = result.realizedPnL;
+    emitEvent("PAPER_TRADE_CLOSED", { tradeId: position.id, symbol: position.symbol, fraction, exit: current, pnl, reason: input.rationale || "AI command", ledgerVersion: result.projection.version, executionMode: "PAPER_ONLY" }, { source: "PAPER_LEDGER", category: "execution", severity: pnl >= 0 ? "success" : "warning", symbol: position.symbol, correlationId: position.id });
+    return { ok: true, tradeId: position.id, fraction, pnl, ledgerVersion: result.projection.version, message: `Cerré en PAPER el ${Math.round(fraction * 100)}% de ${SYMBOLS[position.symbol].label}. P&L realizado ${money(pnl)}.` };
   }
 
-  function commandModifyPaperPosition(input = {}) {
+  async function commandModifyPaperPosition(input = {}) {
     const position = commandFindPosition(input);
     const feedGate = trustedMarketGate("paper_modify");
     if (!feedGate.ok) throw new Error(feedGate.message);
@@ -1099,11 +1118,14 @@ document.addEventListener("DOMContentLoaded", () => {
     const target = input.target == null ? position.target : Number(input.target);
     if (!(stop > 0 && stop < current)) throw new Error("El nuevo stop debe ser positivo y quedar por debajo del precio actual.");
     if (!(target > current)) throw new Error("El nuevo target debe quedar por encima del precio actual.");
-    position.stop = stop;
-    position.target = target;
-    emitEvent("PAPER_POSITION_PROTECTION_MODIFIED", { tradeId: position.id, symbol: position.symbol, stop, target, current, rationale: input.rationale || "", executionMode: "PAPER_ONLY" }, { source: "EXECUTION", category: "execution", severity: "success", symbol: position.symbol, correlationId: position.id });
-    renderPortfolio(); persist();
-    return { ok: true, tradeId: position.id, message: `Protección PAPER actualizada en ${SYMBOLS[position.symbol].label}: stop ${fmtPrice(stop)}, target ${fmtPrice(target)}.` };
+    const result = await window.APEX_PAPER_PORTFOLIO.modify({
+      positionId: position.id,
+      stop,
+      target,
+      reason: input.rationale || "",
+    });
+    emitEvent("PAPER_POSITION_PROTECTION_MODIFIED", { tradeId: position.id, symbol: position.symbol, stop, target, current, rationale: input.rationale || "", ledgerVersion: result.projection.version, executionMode: "PAPER_ONLY" }, { source: "PAPER_LEDGER", category: "execution", severity: "success", symbol: position.symbol, correlationId: position.id });
+    return { ok: true, tradeId: position.id, ledgerVersion: result.projection.version, message: `Protección PAPER actualizada en ${SYMBOLS[position.symbol].label}: stop ${fmtPrice(stop)}, target ${fmtPrice(target)}.` };
   }
 
   function commandSetAgentState(agentId, active) {

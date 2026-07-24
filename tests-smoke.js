@@ -22,7 +22,7 @@ child.stdout.on("data", async chunk => {
     const securedFetch = createSecuredFetch(base);
     const healthRes = await fetch(`${base}/api/health`);
     const health = await healthRes.json();
-    if (!health.ok || health.version !== "7.0.0" || health.executionMode !== "PAPER_ONLY") throw new Error("Health inválido");
+    if (!health.ok || health.version !== "7.1.0" || health.executionMode !== "PAPER_ONLY") throw new Error("Health inválido");
     if (health.externalAccounts !== false || health.liveTrading !== false) throw new Error("Locks de seguridad inválidos");
 
     const state = await fetch(`http://127.0.0.1:${port}/api/runtime/state`).then(r => r.json());
@@ -39,6 +39,21 @@ child.stdout.on("data", async chunk => {
     const marketStatus = await fetch(`http://127.0.0.1:${port}/api/market/status`).then(r => r.json());
     if (!marketStatus.readOnly || marketStatus.hardLocks?.liveTrading !== false || marketStatus.hardLocks?.externalAccounts !== false) throw new Error("Gateway sin locks read-only");
 
+    const initialPortfolio = await fetch(`${base}/api/portfolio`).then(r => r.json());
+    if (!initialPortfolio.ok || initialPortfolio.projection.cash !== 25000 || initialPortfolio.integrity.eventCount !== 1) throw new Error("Ledger PAPER inicial inválido");
+    const paperCommand = {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      idempotencyKey: "smoke-open-0001",
+      body: JSON.stringify({ type: "open_position", positionId: "SMOKE-1", symbol: "ETHUSDT", capital: 100, entry: 100, stop: 95, target: 110, expectedVersion: 1 }),
+    };
+    const paperResponse = await securedFetch("/api/paper/commands", paperCommand);
+    const paperResult = await paperResponse.json();
+    if (!paperResponse.ok || paperResult.projection.positions[0]?.id !== "SMOKE-1") throw new Error("Command API PAPER inválida");
+    const duplicateResponse = await securedFetch("/api/paper/commands", paperCommand);
+    const duplicateResult = await duplicateResponse.json();
+    if (!duplicateResponse.ok || !duplicateResult.duplicate || duplicateResult.projection.positions.length !== 1) throw new Error("Idempotencia PAPER inválida");
+
     for (const secretPath of ["/.env", "/server.js", "/data/apex-runtime-state.json", "/data/apex-market-cache.json"]) {
       const response = await fetch(`http://127.0.0.1:${port}${secretPath}`);
       if (response.status !== 404) throw new Error(`El servidor expuso ${secretPath}`);
@@ -46,7 +61,7 @@ child.stdout.on("data", async chunk => {
 
     const aiRes = await securedFetch("/api/assistant", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: "estado", state: {} }) });
     if (aiRes.status !== 503) throw new Error("La ausencia de clave no fue controlada");
-    console.log("APEX 7.0 smoke test: OK");
+    console.log("APEX 7.1 smoke test: OK");
     finish();
   } catch (error) { finish(error); }
 });

@@ -206,7 +206,8 @@
   async function syncSnapshot() {
     const snapshot = window.APEX_API?.getCommandSnapshot?.();
     if (!snapshot) return;
-    snapshot.version = "7.0.0";
+    delete snapshot.portfolio;
+    snapshot.version = "7.1.0";
     snapshot.runtimeClient = { clientId, href: location.href, timestamp: new Date().toISOString() };
     try {
       await fetch("/api/runtime/snapshot", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ snapshot, client: { clientId, userAgent: navigator.userAgent.slice(0, 300) } }) });
