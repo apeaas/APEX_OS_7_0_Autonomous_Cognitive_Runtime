@@ -8,7 +8,7 @@ const port = 8799;
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "apex7-smoke-"));
 const child = spawn(process.execPath, ["server.js"], {
   cwd: __dirname,
-  env: { ...process.env, APEX_PORT: String(port), OPENAI_API_KEY: "", APEX_DATA_DIR: dataDir },
+  env: { ...process.env, APEX_PORT: String(port), OPENAI_API_KEY: "", APEX_DATA_DIR: dataDir, APEX_MARKET_GATEWAY_DISABLED: "1" },
   stdio: ["ignore", "pipe", "pipe"],
 });
 
@@ -33,7 +33,10 @@ child.stdout.on("data", async chunk => {
     const adapters = await adapterRes.json();
     if (adapters.externalAccountsEnabled !== false) throw new Error("Integraciones externas habilitadas por error");
 
-    for (const secretPath of ["/.env", "/server.js", "/data/apex-runtime-state.json"]) {
+    const marketStatus = await fetch(`http://127.0.0.1:${port}/api/market/status`).then(r => r.json());
+    if (!marketStatus.readOnly || marketStatus.hardLocks?.liveTrading !== false || marketStatus.hardLocks?.externalAccounts !== false) throw new Error("Gateway sin locks read-only");
+
+    for (const secretPath of ["/.env", "/server.js", "/data/apex-runtime-state.json", "/data/apex-market-cache.json"]) {
       const response = await fetch(`http://127.0.0.1:${port}${secretPath}`);
       if (response.status !== 404) throw new Error(`El servidor expuso ${secretPath}`);
     }

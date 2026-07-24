@@ -10,6 +10,8 @@ const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const { MarketDataGateway } = require("./lib/market-data/gateway");
+const marketQuality = require("./assets/js/market-quality");
 
 const ROOT = __dirname;
 loadDotEnv(path.join(ROOT, ".env"));
@@ -27,6 +29,7 @@ const DATA_DIR = process.env.APEX_DATA_DIR ? path.resolve(process.env.APEX_DATA_
 const STATE_FILE = path.join(DATA_DIR, "apex-runtime-state.json");
 const RUNTIME_EVENTS_FILE = path.join(DATA_DIR, "apex-runtime-events.ndjson");
 const CLIENT_EVENTS_FILE = path.join(DATA_DIR, "apex-client-events.ndjson");
+const MARKET_CACHE_FILE = path.join(DATA_DIR, "apex-market-cache.json");
 const AUTONOMY_SPEC = readJsonFile(path.join(ROOT, "config", "apex_autonomy.json"), {});
 const INTEGRATION_SPEC = readJsonFile(path.join(ROOT, "config", "apex_integrations.json"), {});
 const HUMAN_AUTONOMY_CEILING_PCT = 5;
@@ -35,6 +38,11 @@ let cycleInFlight = false;
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 let runtime = loadRuntimeState();
+const marketGateway = new MarketDataGateway({
+  dataDir: DATA_DIR,
+  cacheFile: MARKET_CACHE_FILE,
+  eventSink: (eventType, payload, severity) => appendRuntimeEvent(eventType, payload, severity),
+});
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -192,6 +200,13 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/api/runtime/events") return sendJson(res, 200, { events: readNdjsonTail(RUNTIME_EVENTS_FILE, clamp(Number(url.searchParams.get("limit") || 120), 1, 500)) });
     if (req.method === "GET" && url.pathname === "/api/commands") return sendJson(res, 200, commandCatalog());
     if (req.method === "GET" && url.pathname === "/api/integrations") return sendJson(res, 200, integrationPayload());
+    if (req.method === "GET" && url.pathname === "/api/market/status") return sendJson(res, 200, marketGateway.status());
+    if (req.method === "GET" && url.pathname === "/api/market/snapshot") return sendJson(res, 200, marketGateway.snapshot());
+    if (req.method === "GET" && url.pathname === "/api/market/history") {
+      const symbol = normalizeSymbol(url.searchParams.get("symbol"));
+      const history = marketGateway.history(symbol);
+      return history ? sendJson(res, 200, history) : sendJson(res, 400, { error: "Símbolo no soportado." });
+    }
 
     if (req.method === "POST" && url.pathname.startsWith("/api/")) {
       if (!isTrustedLocalRequest(req)) return sendJson(res, 403, { error: "Origen no autorizado." });
@@ -297,6 +312,16 @@ server.on("error", error => {
 });
 
 server.listen(PORT, HOST, () => {
+  if (process.env.APEX_MARKET_GATEWAY_DISABLED === "1") {
+    console.log("Market Data Gateway: deshabilitado por entorno de prueba.");
+  } else {
+    marketGateway.start()
+      .then(() => console.log("Market Data Gateway: iniciado en modo público read-only."))
+      .catch(error => {
+        appendRuntimeEvent("MARKET_GATEWAY_START_FAILED", { message: safeError(error) }, "error");
+        console.error(`Market Data Gateway: ${safeError(error)}`);
+      });
+  }
   appendRuntimeEvent("SYSTEM_BOOT", { version: "7.0.0", mode: runtime.mode, restoredQueue: runtime.queue.length, restoredPlans: runtime.plans.length }, "success");
   console.log(`\nAPEX OS 7.0 disponible en http://${HOST}:${PORT}`);
   console.log(`Cognitive Runtime: ${OPENAI_API_KEY ? "CONFIGURADO" : "SIN CLAVE · local only"}`);
@@ -361,6 +386,8 @@ async function evaluateAutonomousCycle(options = {}) {
   if (runtime.emergencyStop) return { ok: false, message: "Kill switch activo." };
   if (!options.allowWhenCopilot && runtime.mode !== "paper_autonomous") return { ok: false, message: "El runtime no está en PAPER AUTONOMOUS." };
   if (!runtime.snapshot || !runtime.snapshotReceivedAt) return { ok: false, message: "Todavía no existe un snapshot del cockpit." };
+  const feedGate = marketQuality.gate("autonomous_cycle", runtime.snapshot?.feedQuality);
+  if (!feedGate.ok) return scheduleNoop(feedGate.message);
   const ageSeconds = (Date.now() - Date.parse(runtime.snapshotReceivedAt)) / 1000;
   if (ageSeconds > runtime.config.snapshotFreshnessSeconds) return scheduleNoop(`Snapshot viejo (${Math.round(ageSeconds)}s).`);
 
@@ -427,6 +454,11 @@ function validateAutonomousPolicy(name, args) {
   if (runtime.mode !== "paper_autonomous") return { ok: false, message: "Modo autónomo no habilitado." };
   if (runtime.emergencyStop) return { ok: false, message: "Kill switch activo." };
   const snapshot = runtime.snapshot || {};
+  if (name !== "run_governance_audit") {
+    const feedAction = name === "execute_paper_trade" ? "paper_open" : name === "close_paper_position" ? "paper_close" : "paper_modify";
+    const feedGate = marketQuality.gate(feedAction, snapshot.feedQuality);
+    if (!feedGate.ok) return { ok: false, message: feedGate.message };
+  }
   const equity = Number(snapshot?.portfolio?.equity || 0);
   const cash = Number(snapshot?.portfolio?.cash || 0);
   const positions = Array.isArray(snapshot?.portfolio?.positions) ? snapshot.portfolio.positions : [];
@@ -620,7 +652,7 @@ function runtimeSummary() {
 }
 
 function healthPayload() {
-  return { ok: true, service: "APEX Autonomous Cognitive Runtime", version: "7.0.0", model: OPENAI_MODEL, realtimeModel: OPENAI_REALTIME_MODEL, configured: Boolean(OPENAI_API_KEY), executionMode: "PAPER_ONLY", externalAccounts: false, liveTrading: false, mode: runtime.mode, emergencyStop: runtime.emergencyStop, dataStore: "local-json+ndjson", uptimeSeconds: Math.round(process.uptime()) };
+  return { ok: true, service: "APEX Autonomous Cognitive Runtime", version: "7.0.0", model: OPENAI_MODEL, realtimeModel: OPENAI_REALTIME_MODEL, configured: Boolean(OPENAI_API_KEY), executionMode: "PAPER_ONLY", externalAccounts: false, liveTrading: false, mode: runtime.mode, emergencyStop: runtime.emergencyStop, dataStore: "local-json+ndjson", marketData: marketGateway.status(), uptimeSeconds: Math.round(process.uptime()) };
 }
 
 function integrationPayload() {

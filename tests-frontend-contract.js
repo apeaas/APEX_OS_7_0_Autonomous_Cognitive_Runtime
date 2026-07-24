@@ -6,6 +6,7 @@ const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
 const aiJs = fs.readFileSync(path.join(root, "assets/js/apex-ai-command.js"), "utf8");
 const runtimeJs = fs.readFileSync(path.join(root, "assets/js/apex-7-runtime.js"), "utf8");
 const appJs = fs.readFileSync(path.join(root, "assets/js/app.js"), "utf8");
+const qualityJs = fs.readFileSync(path.join(root, "assets/js/market-quality.js"), "utf8");
 const serverJs = fs.readFileSync(path.join(root, "server.js"), "utf8");
 const css = fs.readFileSync(path.join(root, "assets/css/apex-7-runtime.css"), "utf8");
 
@@ -21,12 +22,15 @@ for (const match of html.matchAll(/<(?:script|link)\b[^>]*(?:src|href)=["']([^"'
   if (!fs.existsSync(path.join(root, ref))) throw new Error(`Asset inexistente: ${ref}`);
 }
 if (!html.includes("apex-7-runtime.css") || !html.includes("apex-7-runtime.js")) throw new Error("Assets v7 no vinculados");
+if (!html.includes("market-math.js") || !html.includes("market-quality.js")) throw new Error("Assets del Market Data Gateway no vinculados");
 if (!aiJs.includes("window.APEX_RUNTIME?.executeCommandAction")) throw new Error("AI Command no delega al runtime v7");
 if (!runtimeJs.includes("processAutonomousQueue") || !runtimeJs.includes("executeAutonomousAction")) throw new Error("Worker autónomo ausente");
 if (!appJs.includes("commandExecutePaperTrade") || !appJs.includes("getCommandSnapshot")) throw new Error("APEX_API incompleta");
 if (!appJs.includes("Autoauditoría determinística")) throw new Error("Governance sigue sin auditoría determinística");
 if (!serverJs.includes("HUMAN_AUTONOMY_CEILING_PCT = 5")) throw new Error("Techo humano no fijado");
 if (!serverJs.includes("externalAccounts: false") || !serverJs.includes("liveTrading: false")) throw new Error("Locks externos ausentes");
+if (!serverJs.includes("/api/market/snapshot") || !appJs.includes("connectMarketDataGateway")) throw new Error("Market Data Gateway no integrado");
+if (!qualityJs.includes("MARKET_DATA_NOT_TRUSTED") || !appJs.includes("RISK_FEED_QUALITY_VETO")) throw new Error("Propagación de calidad hacia Risk ausente");
 if (!css.includes(".autonomy-command-rail") || !css.includes(".runtime-master-grid")) throw new Error("Design System runtime incompleto");
 if (/sk-[A-Za-z0-9_-]{20,}/.test(html + aiJs + runtimeJs + appJs + serverJs)) throw new Error("Posible clave embebida");
 console.log(`APEX 7.0 frontend contract: OK · ${ids.length} static IDs`);

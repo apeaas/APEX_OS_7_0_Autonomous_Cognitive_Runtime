@@ -4,6 +4,8 @@ backups/
 data/apex-runtime-state.json
 data/apex-runtime-events.ndjson
 data/apex-client-events.ndjson
+data/apex-market-cache.json
+data/apex-market-cache.json.tmp
 *.log
 .DS_Store
 Thumbs.db

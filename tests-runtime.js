@@ -27,14 +27,14 @@ const mock = http.createServer((req, res) => {
 });
 
 mock.listen(mockPort, "127.0.0.1", () => {
-  const apex = spawn(process.execPath, ["server.js"], { cwd: __dirname, env: { ...process.env, APEX_PORT: String(apexPort), APEX_DATA_DIR: dataDir, OPENAI_API_KEY: "test-key-not-real", OPENAI_BASE_URL: `http://127.0.0.1:${mockPort}/v1`, OPENAI_MODEL: "mock-model" }, stdio: ["ignore", "pipe", "pipe"] });
+  const apex = spawn(process.execPath, ["server.js"], { cwd: __dirname, env: { ...process.env, APEX_PORT: String(apexPort), APEX_DATA_DIR: dataDir, APEX_MARKET_GATEWAY_DISABLED: "1", OPENAI_API_KEY: "test-key-not-real", OPENAI_BASE_URL: `http://127.0.0.1:${mockPort}/v1`, OPENAI_MODEL: "mock-model" }, stdio: ["ignore", "pipe", "pipe"] });
   const timeout = setTimeout(() => finish(new Error("Runtime test timeout")), 18000);
   let finished = false;
   apex.stdout.on("data", async chunk => {
     if (!String(chunk).includes("disponible")) return;
     try {
       const base = `http://127.0.0.1:${apexPort}`;
-      const snapshot = { version: "7.0.0", executionMode: "PAPER_ONLY", feedStatus: "Conectado", decision: { confidence: 91 }, portfolio: { equity: 10000, cash: 10000, realized: 0, positions: [], recentClosedTrades: [] }, symbols: { ETHUSDT: { price: 100, analysis: { confidence: 91, trend: "Alcista", risk: "Bajo", volumeRatio: 1.4 } } }, governance: { autonomyCapPct: 5, trustScore: "92/100", liveTrading: false } };
+      const snapshot = { version: "7.0.0", executionMode: "PAPER_ONLY", feedStatus: "LIVE · GATEWAY", feedQuality: { status: "healthy", trusted: true, source: "gateway", reason: "test_fixture", lastDataAt: new Date().toISOString(), ageMs: 0, latencyMs: 1 }, decision: { confidence: 91 }, portfolio: { equity: 10000, cash: 10000, realized: 0, positions: [], recentClosedTrades: [] }, symbols: { ETHUSDT: { price: 100, analysis: { confidence: 91, trend: "Alcista", risk: "Bajo", volumeRatio: 1.4 } } }, governance: { autonomyCapPct: 5, trustScore: "92/100", liveTrading: false } };
       let response = await fetch(`${base}/api/runtime/snapshot`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ snapshot }) });
       if (!response.ok) throw new Error("Snapshot rechazado");
 
@@ -43,6 +43,15 @@ mock.listen(mockPort, "127.0.0.1", () => {
 
       response = await fetch(`${base}/api/runtime/mode`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: "paper_autonomous", activationPhrase: "HABILITAR PAPER AUTO" }) });
       if (!response.ok) throw new Error("No se habilitó autonomía con frase");
+
+      response = await fetch(`${base}/api/runtime/snapshot`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ snapshot: { ...snapshot, feedQuality: { status: "degraded", trusted: false, source: "gateway", reason: "test_degraded" } } }) });
+      if (!response.ok) throw new Error("Snapshot degradado rechazado");
+      response = await fetch(`${base}/api/runtime/cycle`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: "feed-degraded-test" }) });
+      const blockedCycle = await response.json();
+      if (!response.ok || !blockedCycle.ok || !blockedCycle.noop || calls !== 0) throw new Error("El runtime no bloqueó el ciclo con feed degradado");
+
+      response = await fetch(`${base}/api/runtime/snapshot`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ snapshot }) });
+      if (!response.ok) throw new Error("Snapshot saludable rechazado");
 
       response = await fetch(`${base}/api/runtime/config`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ autonomyCapPct: 99, maxPositionPct: 99, riskPerTradePct: 99 }) });
       const configResult = await response.json();

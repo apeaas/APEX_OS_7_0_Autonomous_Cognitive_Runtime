@@ -47,6 +47,6 @@ if errorlevel 1 (
 )
 
 start "APEX OS 7.0 Server" /D "%~dp0" cmd /k "title APEX OS 7.0 Server && node server.js"
-timeout /t 2 /nobreak >nul
+ping -n 3 127.0.0.1 >nul
 start "" http://127.0.0.1:5500
 exit /b 0

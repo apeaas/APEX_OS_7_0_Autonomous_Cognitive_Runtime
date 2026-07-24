@@ -12,6 +12,8 @@ document.addEventListener("DOMContentLoaded", () => {
     "wss://stream.binance.com/stream?streams=btcusdt@ticker/ethusdt@ticker/solusdt@ticker",
     "wss://data-stream.binance.vision/stream?streams=btcusdt@ticker/ethusdt@ticker/solusdt@ticker"
   ];
+  const marketMath = window.APEX_MARKET_MATH;
+  const marketQuality = window.APEX_MARKET_QUALITY;
   const eventBus = window.APEX_EVENT_BUS || null;
   const emitEvent = (type, payload = {}, meta = {}) => {
     try { return eventBus?.emit(type, payload, meta) || null; }
@@ -19,7 +21,13 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   const state = {
-    feedStatus: "Conectando",
+    feedStatus: "Recuperando",
+    feedQuality: marketQuality?.normalize?.({ status: "recovering", source: "gateway", reason: "startup" }) || { status: "recovering", trusted: false },
+    marketSource: "gateway_wait",
+    gatewayFailures: 0,
+    gatewayPoll: null,
+    reconnectTimer: null,
+    directFallbackActive: false,
     symbols: {},
     marketHistory: {},
     candles: {},
@@ -86,7 +94,7 @@ document.addEventListener("DOMContentLoaded", () => {
     bindUI();
     renderBots();
     renderPortfolio();
-    hydrateMarketHistory().finally(connectStream);
+    hydrateMarketHistory().finally(connectMarketDataGateway);
     setInterval(simulateBotsAndChecks, 6000);
     setInterval(checkOpenPositions, 3000);
     if (state.portfolio.positions.length) log("Sistema", "Restauración de posiciones paper", "OK");
@@ -147,13 +155,91 @@ document.addEventListener("DOMContentLoaded", () => {
     els.currentTime.textContent = now.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
   }
 
-  function connectStream() {
-    setFeedStatus(`Conectando ${state.streamIndex + 1}/${STREAMS.length}`, "live");
+  async function connectMarketDataGateway() {
+    await pollMarketDataGateway();
+    if (!state.gatewayPoll) state.gatewayPoll = setInterval(pollMarketDataGateway, 1000);
+  }
+
+  async function pollMarketDataGateway() {
     try {
-      if (state.socket) state.socket.close();
+      const response = await fetch("/api/market/snapshot", { cache: "no-store" });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const payload = await response.json();
+      const quality = marketQuality?.normalize?.(payload.quality) || payload.quality || { status: "disconnected", trusted: false };
+      state.gatewayFailures = 0;
+      applyFeedQuality(quality);
+      Object.entries(payload.symbols || {}).forEach(([symbol, entry]) => {
+        if (!SYMBOLS[symbol] || !entry?.ticker) return;
+        state.symbols[symbol] = { ...entry.ticker };
+        if (!state.marketHistory[symbol]) state.marketHistory[symbol] = [];
+        const price = Number(entry.ticker.price);
+        const last = state.marketHistory[symbol][state.marketHistory[symbol].length - 1];
+        if (Number.isFinite(price) && price !== last) state.marketHistory[symbol].push(price);
+        if (state.marketHistory[symbol].length > 120) state.marketHistory[symbol].shift();
+      });
+      state.marketSource = marketQuality?.clientSource?.(quality, state.gatewayFailures) || (quality.trusted ? "gateway" : "gateway_wait");
+      if (state.marketSource === "gateway") stopDirectFallback();
+      else if (state.marketSource === "direct_fallback") startDirectFallback();
+      refreshAll();
+    } catch (error) {
+      state.gatewayFailures += 1;
+      const quality = {
+        status: state.gatewayFailures >= 3 ? "disconnected" : "recovering",
+        trusted: false,
+        source: "gateway",
+        reason: "gateway_unreachable",
+        issues: [{ code: "gateway_unreachable", detail: error.message }]
+      };
+      applyFeedQuality(quality);
+      state.marketSource = marketQuality?.clientSource?.(quality, state.gatewayFailures) || (state.gatewayFailures >= 3 ? "direct_fallback" : "gateway_wait");
+      if (state.marketSource === "direct_fallback") {
+        startDirectFallback();
+        if (state.socket?.readyState === WebSocket.OPEN) {
+          applyFeedQuality({ status: "degraded", trusted: false, source: "browser_direct_fallback", reason: "gateway_unavailable_direct_feed_visible" });
+        }
+      }
+    }
+  }
+
+  function applyFeedQuality(input) {
+    const quality = marketQuality?.normalize?.(input) || input || { status: "disconnected", trusted: false };
+    const previous = state.feedQuality?.status;
+    state.feedQuality = quality;
+    const label = marketQuality?.label?.(quality) || String(quality.status || "disconnected").toUpperCase();
+    setFeedStatus(label, quality.trusted ? "live" : "warn");
+    eventBus?.emitIfChanged("market-feed-quality", `${quality.status}:${quality.trusted}`, "DATA_FEED_QUALITY_CHANGED", {
+      status: quality.status,
+      trusted: quality.trusted,
+      source: quality.source,
+      reason: quality.reason,
+      ageMs: quality.ageMs,
+      latencyMs: quality.latencyMs,
+      previous
+    }, { source: "MARKET_GATEWAY", category: "market", severity: quality.trusted ? "success" : ["recovering", "degraded"].includes(quality.status) ? "warning" : "error" });
+  }
+
+  function startDirectFallback() {
+    if (state.directFallbackActive) return;
+    state.directFallbackActive = true;
+    connectDirectFallbackStream();
+  }
+
+  function stopDirectFallback() {
+    state.directFallbackActive = false;
+    if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
+    state.reconnectTimer = null;
+    const socket = state.socket;
+    state.socket = null;
+    try { socket?.close?.(); } catch {}
+  }
+
+  function connectDirectFallbackStream() {
+    if (!state.directFallbackActive || state.socket) return;
+    applyFeedQuality({ status: "recovering", trusted: false, source: "browser_direct_fallback", reason: `connecting_stream_${state.streamIndex + 1}` });
+    try {
       state.socket = new WebSocket(STREAMS[state.streamIndex]);
       state.socket.onopen = () => {
-        setFeedStatus(`LIVE ${state.streamIndex + 1}/${STREAMS.length}`, "live");
+        applyFeedQuality({ status: "degraded", trusted: false, source: "browser_direct_fallback", reason: "gateway_unavailable_direct_feed_visible" });
         log("Feed", "Conexión Binance establecida", "LIVE");
       };
       state.socket.onmessage = (event) => {
@@ -163,23 +249,30 @@ document.addEventListener("DOMContentLoaded", () => {
         const sym = data.s;
         const price = Number(data.c), change = Number(data.P), high = Number(data.h), low = Number(data.l),
               vol = Number(data.v), bid = Number(data.b), ask = Number(data.a), open = Number(data.o);
-        state.symbols[sym] = { price, change, high, low, vol, bid, ask, open, spread: ask - bid, ts: Date.now() };
+        if (![price, high, low, vol, bid, ask, open].every(Number.isFinite) || !(high >= price && price >= low && ask >= bid)) return;
+        state.symbols[sym] = { price, change, high, low, vol, bid, ask, open, spread: ask - bid, ts: Date.now(), source: "browser_direct_fallback" };
         if (!state.marketHistory[sym]) state.marketHistory[sym] = [];
         state.marketHistory[sym].push(price);
         if (state.marketHistory[sym].length > 80) state.marketHistory[sym].shift();
         refreshAll();
       };
-      state.socket.onerror = () => attemptReconnect("Error en stream");
-      state.socket.onclose = () => attemptReconnect("Reconectando");
+      state.socket.onerror = () => attemptReconnect("fallback_stream_error");
+      state.socket.onclose = () => attemptReconnect("fallback_stream_closed");
     } catch (err) {
       attemptReconnect("Falló conexión");
     }
   }
 
-  function attemptReconnect(msg) {
-    setFeedStatus(msg, "warn");
+  function attemptReconnect(reason) {
+    if (!state.directFallbackActive || state.reconnectTimer) return;
+    state.socket = null;
+    applyFeedQuality({ status: "disconnected", trusted: false, source: "browser_direct_fallback", reason });
     state.streamIndex = (state.streamIndex + 1) % STREAMS.length;
-    setTimeout(connectStream, 1400);
+    const delay = Math.min(30_000, 1000 * (2 ** Math.min(state.streamIndex, 4)));
+    state.reconnectTimer = setTimeout(() => {
+      state.reconnectTimer = null;
+      connectDirectFallbackStream();
+    }, delay);
   }
 
   function setFeedStatus(text, mode) {
@@ -253,6 +346,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function analyzeSymbol(sym) {
     const d = state.symbols[sym];
+    const feedTrusted = Boolean(marketQuality?.isTrusted?.(state.feedQuality));
     const candles = state.candles[sym] || [];
     const closes = candles.length ? candles.map(c => c.close) : (state.marketHistory[sym] || []);
     const current = d?.price || closes[closes.length - 1] || 0;
@@ -282,15 +376,19 @@ document.addEventListener("DOMContentLoaded", () => {
     const rsiScore = rsi14 >= 45 && rsi14 <= 65 ? 82 : rsi14 > 70 || rsi14 < 30 ? 38 : 64;
     const liquidityScore = clamp(Math.round(65 + Math.min(volumeRatio, 2) * 14), 50, 94);
     const riskScore = risk === "Normal" ? 86 : risk === "Moderado" ? 62 : 35;
-    const confidence = clamp(Math.round(trendScore*.28 + momentumScore*.18 + rsiScore*.18 + liquidityScore*.16 + riskScore*.20), 35, 94);
+    let confidence = clamp(Math.round(trendScore*.28 + momentumScore*.18 + rsiScore*.18 + liquidityScore*.16 + riskScore*.20), 35, 94);
 
-    const recommendation = trend === "Alcista" && rsi14 < 70 && risk !== "Alto" && volumeRatio >= .75 ? "COMPRAR" :
+    let recommendation = trend === "Alcista" && rsi14 < 70 && risk !== "Alto" && volumeRatio >= .75 ? "COMPRAR" :
       trend === "Bajista" && (risk === "Alto" || rsi14 < 38) ? "EVITAR" : "ESPERAR";
+    if (!feedTrusted) {
+      confidence = Math.min(confidence, 35);
+      recommendation = "ESPERAR";
+    }
 
     return { trendLabel: trend, regime, riskLabel: risk, confidence, momentum, positionRange,
       ema20, ema50, rsi14, atr14, atrPct, volumeRatio,
       scores: { trend: trendScore, momentum: momentumScore, rsi: rsiScore, liquidity: liquidityScore, risk: riskScore },
-      recommendation };
+      recommendation, feedTrusted, feedQualityStatus: state.feedQuality?.status || "disconnected" };
   }
 
   function computeStrategies() {
@@ -583,12 +681,22 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   function closeDrawer(){ els.tradeDrawer.classList.remove("open"); }
 
+  function trustedMarketGate(action) {
+    return marketQuality?.gate?.(action, state.feedQuality) || { ok: Boolean(state.feedQuality?.trusted), message: "Datos de mercado no confiables." };
+  }
+
   function validateOrExecuteTicket() {
     const symbol = els.tradeDrawer.dataset.symbol || state.focusSymbol;
     const capital = Number(els.capitalInput.value);
     const entry = Number(els.entryInput.value);
     const stop = Number(els.stopInput.value);
     const target = Number(els.targetInput.value);
+    const feedGate = trustedMarketGate("paper_open");
+    if (!feedGate.ok) {
+      state.ticketValidated = false;
+      emitEvent("RISK_FEED_QUALITY_VETO", { symbol, action: "paper_open", quality: state.feedQuality, reason: feedGate.message }, { source: "RISK", category: "risk", severity: "error", symbol });
+      return showTicket("rejected", "OPERACIÓN BLOQUEADA", feedGate.message);
+    }
 
     if (!state.ticketValidated) {
       if (capital <= 0 || capital > state.portfolio.cash) {
@@ -644,6 +752,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function checkOpenPositions() {
+    if (!trustedMarketGate("risk").ok) return;
     const positions = [...state.portfolio.positions];
     positions.forEach(pos => {
       const current = state.symbols[pos.symbol]?.price;
@@ -753,12 +862,22 @@ document.addEventListener("DOMContentLoaded", () => {
   async function hydrateMarketHistory() {
     await Promise.all(Object.keys(SYMBOLS).map(async sym => {
       try {
-        const response = await fetch(`https://api.binance.com/api/v3/klines?symbol=${sym}&interval=15m&limit=120`);
+        const response = await fetch(`/api/market/history?symbol=${encodeURIComponent(sym)}`, { cache: "no-store" });
         if (!response.ok) throw new Error("HTTP " + response.status);
-        const rows = await response.json();
-        state.candles[sym] = rows.map(r => ({ open:+r[1], high:+r[2], low:+r[3], close:+r[4], volume:+r[5], ts:+r[0] }));
+        const payload = await response.json();
+        const rows = Array.isArray(payload.candles) ? payload.candles : [];
+        if (!rows.length) throw new Error("Sin velas validadas");
+        state.candles[sym] = rows.map(r => ({ open:+r.open, high:+r.high, low:+r.low, close:+r.close, volume:+r.volume, ts:+r.openTime }));
         state.marketHistory[sym] = state.candles[sym].map(c => c.close);
       } catch (error) {
+        try {
+          const fallback = await fetch(`https://api.binance.com/api/v3/klines?symbol=${sym}&interval=15m&limit=120`);
+          if (!fallback.ok) throw new Error("HTTP " + fallback.status);
+          const rows = await fallback.json();
+          state.candles[sym] = rows.map(r => ({ open:+r[1], high:+r[2], low:+r[3], close:+r[4], volume:+r[5], ts:+r[0] }));
+          state.marketHistory[sym] = state.candles[sym].map(c => c.close);
+          return;
+        } catch {}
         log("Data Pipeline", `${SYMBOLS[sym].short}: histórico no disponible; se usará feed incremental`, "FALLBACK");
       }
     }));
@@ -774,32 +893,15 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function ema(values, period) {
-    if (!values.length) return 0;
-    const slice = values.slice(-Math.max(period * 3, period));
-    const k = 2 / (period + 1);
-    let result = slice[0];
-    for (let i=1;i<slice.length;i++) result = slice[i] * k + result * (1-k);
-    return result;
+    return marketMath?.ema?.(values, period) ?? 0;
   }
   function rsi(values, period=14) {
-    if (values.length < 2) return 50;
-    const slice = values.slice(-(period+1));
-    let gains=0, losses=0;
-    for(let i=1;i<slice.length;i++){ const diff=slice[i]-slice[i-1]; if(diff>=0) gains+=diff; else losses-=diff; }
-    const avgGain=gains/Math.max(slice.length-1,1), avgLoss=losses/Math.max(slice.length-1,1);
-    if(avgLoss===0) return avgGain===0?50:100;
-    return 100-(100/(1+avgGain/avgLoss));
+    return marketMath?.rsi?.(values, period) ?? 50;
   }
   function atr(candles, period=14) {
-    if (candles.length < 2) return 0;
-    const trs=[];
-    for(let i=1;i<candles.length;i++){
-      const c=candles[i], prev=candles[i-1].close;
-      trs.push(Math.max(c.high-c.low, Math.abs(c.high-prev), Math.abs(c.low-prev)));
-    }
-    return average(trs.slice(-period));
+    return marketMath?.atr?.(candles, period) ?? 0;
   }
-  function average(values){ return values.length ? values.reduce((a,b)=>a+b,0)/values.length : 0; }
+  function average(values){ return marketMath?.average?.(values) ?? 0; }
   function indicator(label,value){ return `<div class="indicator-chip"><span>${label}</span><strong>${value}</strong></div>`; }
 
   function persist() {
@@ -842,6 +944,7 @@ document.addEventListener("DOMContentLoaded", () => {
       symbols[symbol] = {
         label: SYMBOLS[symbol].label,
         price: Number(market.price || 0),
+        timestamp: Number(market.ts || 0),
         change24h: Number(market.change || 0),
         bid: Number(market.bid || 0),
         ask: Number(market.ask || 0),
@@ -865,6 +968,8 @@ document.addEventListener("DOMContentLoaded", () => {
       executionMode: "PAPER_ONLY",
       externalAccounts: false,
       feedStatus: state.feedStatus,
+      feedQuality: marketQuality?.normalize?.(state.feedQuality) || state.feedQuality,
+      marketSource: state.marketSource,
       focusSymbol: state.focusSymbol,
       symbols,
       decision: state.decision ? { ...state.decision } : null,
@@ -931,6 +1036,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function commandExecutePaperTrade(input = {}) {
     const symbol = commandResolveSymbol(input.symbol || state.focusSymbol);
+    const feedGate = trustedMarketGate("paper_open");
+    if (!feedGate.ok) throw new Error(feedGate.message);
     const capital = Number(input.capital);
     const entry = Number(input.entry);
     const stop = Number(input.stop);
@@ -965,6 +1072,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function commandClosePaperPosition(input = {}) {
     const position = commandFindPosition(input);
+    const feedGate = trustedMarketGate("paper_close");
+    if (!feedGate.ok) throw new Error(feedGate.message);
     const fraction = Math.max(0.01, Math.min(1, Number(input.fraction || 1)));
     const index = state.portfolio.positions.findIndex(item => item.id === position.id);
     const current = state.symbols[position.symbol]?.price || position.entry;
@@ -983,6 +1092,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function commandModifyPaperPosition(input = {}) {
     const position = commandFindPosition(input);
+    const feedGate = trustedMarketGate("paper_modify");
+    if (!feedGate.ok) throw new Error(feedGate.message);
     const current = state.symbols[position.symbol]?.price || position.entry;
     const stop = input.stop == null ? position.stop : Number(input.stop);
     const target = input.target == null ? position.target : Number(input.target);
@@ -1032,6 +1143,7 @@ document.addEventListener("DOMContentLoaded", () => {
     getFocusSymbol: () => state.focusSymbol,
     getSymbolLabel: (symbol) => SYMBOLS[symbol]?.label || symbol,
     getState: () => state,
+    getFeedQuality: () => marketQuality?.normalize?.(state.feedQuality) || state.feedQuality,
     getEventBus: () => eventBus,
     getMemory: () => eventBus?.getMemory?.() || null,
     getCommandSnapshot: commandSnapshot,
@@ -1086,7 +1198,12 @@ document.addEventListener("DOMContentLoaded", () => {
     const analyses = Object.values(snapshot?.symbols || {}).map(item => item?.analysis).filter(Boolean);
     let score = 96;
     const reasons = [];
-    if (!String(snapshot.feedStatus || '').toLowerCase().includes('conect')) { score -= 14; reasons.push('feed no confirmado'); }
+    const feedGate = window.APEX_MARKET_QUALITY?.gate?.('governance', snapshot.feedQuality) || { ok: false };
+    if (!feedGate.ok) {
+      score -= 30;
+      reasons.push(`feed ${snapshot.feedQuality?.status || 'no confirmado'}`);
+      if (['stale', 'disconnected'].includes(snapshot.feedQuality?.status)) score = Math.min(score, 65);
+    }
     if (!integrity.ok) { score -= 24; reasons.push('integridad de memoria comprometida'); }
     if (analyses.some(item => item.risk === 'Alto')) { score -= 9; reasons.push('riesgo alto detectado'); }
     if (positions.length > 3) { score -= 7; reasons.push('exceso de posiciones'); }
@@ -1139,6 +1256,8 @@ document.addEventListener("DOMContentLoaded", () => {
   function buildCase(symbol = activeSymbol(), options = {}){
     const persistCase = options.persist !== false;
     const a = getAnalysis(symbol) || {confidence:72, trendLabel:'Neutral', regime:'Lateral', riskLabel:'Moderado', rsi14:50, volumeRatio:1, atrPct:1.2, recommendation:'ESPERAR'};
+    const feedQuality = window.APEX_API?.getFeedQuality?.() || { status: 'disconnected', trusted: false };
+    const feedTrusted = Boolean(window.APEX_MARKET_QUALITY?.isTrusted?.(feedQuality));
     if (persistCase) {
       caseCounter += 1;
       localStorage.setItem('apexCaseCounter', caseCounter);
@@ -1147,16 +1266,19 @@ document.addEventListener("DOMContentLoaded", () => {
     const id = persistCase ? `CASE-${String(caseCounter).padStart(4,'0')}` : (lastPersistedCase || 'CASE-PREVIEW');
     const trendBull = a.trendLabel === 'Alcista';
     const trendBear = a.trendLabel === 'Bajista';
-    const enoughVolume = a.volumeRatio >= .9;
+    const enoughVolume = feedTrusted && a.volumeRatio >= .9;
     const highRisk = a.riskLabel === 'Alto';
-    const consensus = Math.max(38, Math.min(94, Math.round(a.confidence - (highRisk?12:0) + (enoughVolume?3:-4))));
-    const decision = highRisk ? 'RECHAZAR POR RIESGO' : consensus >= 82 && enoughVolume ? (trendBear ? 'EVITAR / SESGO BAJISTA' : 'APROBAR EN PAPER') : 'ESPERAR CONFIRMACIÓN';
-    const autonomous = decision === 'APROBAR EN PAPER' && consensus >= 86;
+    const rawConsensus = Math.max(38, Math.min(94, Math.round(a.confidence - (highRisk?12:0) + (enoughVolume?3:-4))));
+    const consensus = feedTrusted ? rawConsensus : Math.min(rawConsensus, 35);
+    const decision = !feedTrusted ? 'ESPERAR DATOS CONFIABLES' : highRisk ? 'RECHAZAR POR RIESGO' : consensus >= 82 && enoughVolume ? (trendBear ? 'EVITAR / SESGO BAJISTA' : 'APROBAR EN PAPER') : 'ESPERAR CONFIRMACIÓN';
+    const autonomous = feedTrusted && decision === 'APROBAR EN PAPER' && consensus >= 86;
 
     byId('caseId').textContent = id;
     byId('caseAsset').textContent = label(symbol);
     byId('caseConsensus').textContent = `${consensus}%`;
-    byId('caseHypothesis').textContent = trendBull
+    byId('caseHypothesis').textContent = !feedTrusted
+      ? `El feed está ${feedQuality.status || 'no confirmado'}; no se formula una tesis operable hasta recuperar datos saludables y validados.`
+      : trendBull
       ? 'La tendencia puede continuar si el precio mantiene estructura, liquidez y confirmación de volumen.'
       : trendBear
         ? 'La debilidad puede prolongarse; cualquier entrada exige invalidación clara del sesgo bajista.'
@@ -1169,6 +1291,7 @@ document.addEventListener("DOMContentLoaded", () => {
     ];
     if (a.confidence >= 80) evidence.push(item('Convergencia cuantitativa', `El Confidence Builder alcanza ${a.confidence}%.`));
     const counters = [];
+    if (!feedTrusted) counters.push(objection('Calidad de feed no confiable', `Estado ${feedQuality.status || 'desconocido'}; Thinking, Risk y Governance bloquean cualquier conclusión operable.`));
     if (!enoughVolume) counters.push(objection('Confirmación insuficiente', 'El volumen relativo todavía no respalda una ruptura fiable.'));
     if (a.atrPct > 2) counters.push(objection('Volatilidad expandida', `ATR relativo ${Number(a.atrPct).toFixed(2)}%; aumenta el riesgo de barrido.`));
     if (a.rsi14 > 68 || a.rsi14 < 32) counters.push(objection('Extremo de momentum', 'El RSI está cerca de una zona donde el timing puede deteriorarse.'));
@@ -1180,7 +1303,7 @@ document.addEventListener("DOMContentLoaded", () => {
     byId('counterCount').textContent = counters.length;
     byId('caseDecision').textContent = decision;
     byId('caseAutonomy').textContent = autonomous ? 'HABILITADA EN PAPER' : 'NO HABILITADA';
-    byId('caseStatus').textContent = decision.includes('APROBAR') ? 'CASO APROBADO' : decision.includes('RECHAZAR') ? 'CASO RECHAZADO' : 'EN ANÁLISIS';
+    byId('caseStatus').textContent = decision.includes('APROBAR') ? 'CASO APROBADO' : decision.includes('RECHAZAR') ? 'CASO RECHAZADO' : !feedTrusted ? 'DATOS NO CONFIABLES' : 'EN ANÁLISIS';
 
     const objections = [
       objection('Hipótesis alternativa', trendBull ? 'El movimiento puede ser una expansión tardía cerca de resistencia.' : 'La neutralidad puede persistir y erosionar la ventaja por ruido.'),
@@ -1188,10 +1311,10 @@ document.addEventListener("DOMContentLoaded", () => {
       objection('Calidad de evidencia', enoughVolume ? 'El volumen acompaña, pero debe sostenerse durante la confirmación.' : 'La evidencia de volumen no alcanza el umbral mínimo.')
     ];
     byId('prosecutorObjections').innerHTML = objections.join('');
-    byId('prosecutorVerdict').textContent = highRisk ? 'OBJECIÓN MAYOR' : consensus >= 84 ? 'TESIS RESISTENTE' : 'OBJECIÓN PARCIAL';
-    byId('prosecutorSummary').textContent = highRisk ? 'El riesgo domina la oportunidad. El Fiscal recomienda no autorizar ejecución.' : consensus >= 84 ? 'La tesis sobrevivió al primer ataque, aunque conserva condiciones de invalidación.' : 'La tesis es plausible, pero todavía depende de confirmaciones adicionales.';
-    byId('hardVetoState').textContent = highRisk ? 'ACTIVADO' : 'NO ACTIVADO';
-    byId('hardVetoState').style.color = highRisk ? 'var(--red)' : 'var(--green)';
+    byId('prosecutorVerdict').textContent = !feedTrusted ? 'VETO DE DATOS' : highRisk ? 'OBJECIÓN MAYOR' : consensus >= 84 ? 'TESIS RESISTENTE' : 'OBJECIÓN PARCIAL';
+    byId('prosecutorSummary').textContent = !feedTrusted ? 'El feed no cumple el contrato de confianza. El Fiscal veta toda conclusión operable.' : highRisk ? 'El riesgo domina la oportunidad. El Fiscal recomienda no autorizar ejecución.' : consensus >= 84 ? 'La tesis sobrevivió al primer ataque, aunque conserva condiciones de invalidación.' : 'La tesis es plausible, pero todavía depende de confirmaciones adicionales.';
+    byId('hardVetoState').textContent = highRisk || !feedTrusted ? 'ACTIVADO' : 'NO ACTIVADO';
+    byId('hardVetoState').style.color = highRisk || !feedTrusted ? 'var(--red)' : 'var(--green)';
 
     const correlationId = id;
     if (persistCase) {
@@ -1205,7 +1328,7 @@ document.addEventListener("DOMContentLoaded", () => {
     counters.forEach((_, index) => window.APEX_EVENT_BUS?.emit("PROSECUTOR_OBJECTION", {
       caseId: id, symbol, title: `Objeción ${index + 1}`, detail: byId('caseCounterEvidence').children[index]?.innerText || "Contraevidencia registrada",
       confidence: Math.max(50, 84 - index * 6)
-    }, { source: "PROSECUTOR", category: "objection", severity: highRisk ? "error" : "warning", caseId: id, symbol, correlationId }));
+    }, { source: "PROSECUTOR", category: "objection", severity: highRisk || !feedTrusted ? "error" : "warning", caseId: id, symbol, correlationId }));
     window.APEX_EVENT_BUS?.emit("CASE_DECIDED", {
       caseId: id, symbol, decision, consensus, autonomous,
       hypothesis: byId('caseHypothesis').textContent,
@@ -1249,10 +1372,10 @@ document.addEventListener("DOMContentLoaded", () => {
   function renderDeliberation(a, decision, autonomous){
     const rows = [
       ['HUNTER','Detectó una configuración investigable',a.confidence>=70?'APRUEBA':'OBJETA'],
-      ['CONTEXT','Contexto externo pendiente de conexión','OBJETA'],
+      ['CONTEXT',a.feedTrusted?'Contexto externo pendiente de conexión':`Feed ${a.feedQualityStatus || 'no confiable'}`,a.feedTrusted?'OBJETA':'VETO'],
       ['STRATEGY',`Plan ${a.recommendation.toLowerCase()} compatible con el régimen`,a.recommendation==='COMPRAR'?'APRUEBA':'OBJETA'],
-      ['RISK',`Riesgo ${a.riskLabel.toLowerCase()}`,a.riskLabel==='Alto'?'VETO':a.riskLabel==='Moderado'?'OBJETA':'APRUEBA'],
-      ['GOVERNANCE',autonomous?'Licencia paper disponible':'Umbral autónomo no alcanzado',autonomous?'APRUEBA':'OBJETA']
+      ['RISK',a.feedTrusted?`Riesgo ${a.riskLabel.toLowerCase()}`:'Calidad de mercado insuficiente',!a.feedTrusted||a.riskLabel==='Alto'?'VETO':a.riskLabel==='Moderado'?'OBJETA':'APRUEBA'],
+      ['GOVERNANCE',autonomous?'Licencia paper disponible':a.feedTrusted?'Umbral autónomo no alcanzado':'Autonomía suspendida por datos',autonomous?'APRUEBA':a.feedTrusted?'OBJETA':'VETO']
     ];
     byId('deliberationFlow').innerHTML = rows.map(([agent,text,vote]) => `<div class="deliberation-step"><b class="agent">${agent}</b><span>${text}</span><b class="vote ${vote==='APRUEBA'?'approve':vote==='VETO'?'veto':'object'}">${vote}</b></div>`).join('');
     byId('deliberationState').textContent = decision.includes('APROBAR') ? 'CONSENSO' : decision.includes('RECHAZAR') ? 'VETO' : 'DELIBERANDO';
