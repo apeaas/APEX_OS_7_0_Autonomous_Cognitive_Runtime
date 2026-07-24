@@ -1,0 +1,58 @@
+{
+  "version": "APEX OS 7.0",
+  "schema_version": "1.0.0",
+  "execution_mode": "paper_only",
+  "event_store": {
+    "adapter": "browser_local_storage",
+    "key": "apex.eventbus.v1.events",
+    "max_events": 1800,
+    "append_only_during_normal_operation": true,
+    "checksum": "fnv1a"
+  },
+  "memory_store": {
+    "key": "apex.eventbus.v1.memory",
+    "max_records_per_domain": 500,
+    "domains": [
+      "decisions",
+      "objections",
+      "audits",
+      "outcomes",
+      "observations"
+    ]
+  },
+  "replay": {
+    "enabled": true,
+    "side_effects": false,
+    "scope": "correlation_id"
+  },
+  "critical_event_types": [
+    "CASE_CREATED",
+    "EVIDENCE_REGISTERED",
+    "PROSECUTOR_OBJECTION",
+    "CASE_DECIDED",
+    "AUTONOMY_ASSESSED",
+    "GOVERNANCE_AUDIT_COMPLETED",
+    "RISK_VETO",
+    "PAPER_TRADE_OPENED",
+    "PAPER_TRADE_CLOSED",
+    "AI_COMMAND_REQUESTED",
+    "AI_RESPONSE_RECEIVED",
+    "AI_ACTION_PROPOSED",
+    "AI_ACTION_CONFIRMED",
+    "AI_ACTION_EXECUTED",
+    "AI_ACTION_REJECTED"
+  ],
+  "safety": {
+    "live_trading_enabled": false,
+    "broker_execution_enabled": false,
+    "wallet_signing_enabled": false,
+    "human_autonomy_ceiling_percent": 5
+  },
+  "ai_command": {
+    "enabled": true,
+    "backend": "local_node",
+    "tool_allowlist": true,
+    "sensitive_confirmation": true,
+    "paper_only": true
+  }
+}

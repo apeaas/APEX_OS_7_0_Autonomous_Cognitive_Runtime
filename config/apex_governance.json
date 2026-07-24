@@ -1,0 +1,22 @@
+{
+  "version": "Quantum Architecture I",
+  "execution_mode": "paper_only",
+  "autonomy": {
+    "human_ceiling_percent": 5,
+    "self_reduction_allowed": true,
+    "self_suspension_allowed": true,
+    "self_expansion_above_human_ceiling_allowed": false
+  },
+  "thinking_engine": {
+    "case_required_before_execution": true,
+    "adversarial_review_required": true,
+    "historical_precedent_required": true,
+    "hard_veto_agents": ["risk", "governance"],
+    "external_context_status": "pending_connector"
+  },
+  "safety": {
+    "live_trading_enabled": false,
+    "wallet_signing_enabled": false,
+    "broker_execution_enabled": false
+  }
+}

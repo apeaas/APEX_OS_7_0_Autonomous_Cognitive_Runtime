@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "APEX Adapter Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "name", "kind", "version", "capabilities", "defaultMode"],
+  "properties": {
+    "id": {"type":"string","pattern":"^[a-z0-9-]+$"},
+    "name": {"type":"string"},
+    "kind": {"enum":["market_data","broker","wallet","notification","research","storage"]},
+    "version": {"type":"string"},
+    "capabilities": {"type":"array","items":{"type":"string"}},
+    "defaultMode": {"enum":["disabled","read_only","paper","live"]},
+    "requiresSecrets": {"type":"array","items":{"type":"string"}},
+    "healthEndpoint": {"type":"string"},
+    "notes": {"type":"string"}
+  }
+}

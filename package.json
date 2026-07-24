@@ -1,0 +1,20 @@
+{
+  "name": "apex-os-7-autonomous-cognitive-runtime",
+  "version": "7.0.0",
+  "private": true,
+  "description": "Local governed AI runtime with persistent planning and PAPER autonomy for APEX OS.",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js && node --check assets/js/apex-event-bus.js && node --check assets/js/app.js && node --check assets/js/adaptive-cockpit.js && node --check assets/js/living-cockpit.js && node --check assets/js/genesis-god-mode.js && node --check assets/js/apex-memory-ui.js && node --check assets/js/apex-ai-command.js && node --check assets/js/apex-7-runtime.js",
+    "test": "npm run check && npm run test:contract && npm run test:smoke && npm run test:ai && npm run test:runtime",
+    "test:smoke": "node tests-smoke.js",
+    "test:ai": "node tests-ai-flow.js",
+    "test:contract": "node tests-frontend-contract.js",
+    "test:runtime": "node tests-runtime.js",
+    "doctor": "node tools/doctor.js",
+    "backup": "node tools/backup.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,0 +1,81 @@
+{
+  "version": "7.0.0",
+  "codename": "Autonomous Cognitive Runtime",
+  "execution_mode": "PAPER_ONLY",
+  "external_accounts": {
+    "enabled": false,
+    "deferred": true
+  },
+  "ai": {
+    "backend_required": true,
+    "default_model": "gpt-5.1",
+    "endpoint": "/api/assistant",
+    "health_endpoint": "/api/health",
+    "history_turns": 12,
+    "max_prompt_chars": 8000,
+    "fallback": "local_rule_based_read_only",
+    "runtime_endpoint": "/api/runtime/state",
+    "commands_endpoint": "/api/commands",
+    "integrations_endpoint": "/api/integrations"
+  },
+  "voice": {
+    "input": "browser_push_to_talk_plus_optional_webrtc_realtime",
+    "locale": "es-AR",
+    "output": "browser_speech_synthesis_plus_optional_realtime_audio",
+    "full_duplex": "optional_beta",
+    "realtime_model": "gpt-realtime"
+  },
+  "governance": {
+    "human_autonomy_ceiling_pct": 5,
+    "live_trading": false,
+    "sensitive_actions_require_confirmation": true,
+    "risk_engine_veto": true,
+    "governance_engine_veto": true,
+    "paper_command_armed_per_session": true,
+    "autonomous_paper_runtime": true,
+    "kill_switch": true,
+    "deterministic_policy_gateway": true,
+    "persistent_runtime_audit": true
+  },
+  "tools": {
+    "read_and_navigation": [
+      "navigate_platform",
+      "focus_asset",
+      "refresh_market_reading",
+      "open_evidence",
+      "create_case",
+      "set_watchlist",
+      "export_system_memory"
+    ],
+    "paper_preparation": [
+      "prepare_paper_trade"
+    ],
+    "confirmation_required": [
+      "execute_paper_trade",
+      "close_paper_position",
+      "modify_paper_position",
+      "set_agent_state",
+      "run_governance_audit"
+    ],
+    "forbidden": [
+      "live_order",
+      "withdrawal",
+      "wallet_signature",
+      "bank_transfer",
+      "external_account_connection",
+      "raise_autonomy_ceiling",
+      "disable_risk_veto"
+    ],
+    "runtime": [
+      "inspect_runtime",
+      "create_plan",
+      "manage_plan",
+      "change_runtime_mode",
+      "update_runtime_config",
+      "run_autonomous_cycle",
+      "emergency_stop",
+      "resume_after_emergency",
+      "export_runtime_state"
+    ]
+  }
+}

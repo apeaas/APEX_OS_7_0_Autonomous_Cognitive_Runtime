@@ -1,0 +1,9 @@
+.env
+node_modules/
+backups/
+data/apex-runtime-state.json
+data/apex-runtime-events.ndjson
+data/apex-client-events.ndjson
+*.log
+.DS_Store
+Thumbs.db

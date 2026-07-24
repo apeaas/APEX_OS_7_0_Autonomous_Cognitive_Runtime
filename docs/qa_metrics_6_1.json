@@ -1,0 +1,47 @@
+{
+  "viewport": "1366x768",
+  "mission": {
+    "title": "APEX OS 6.1 · Event Bus & Persistent Memory",
+    "activeNav": [
+      "Misión"
+    ],
+    "horizontalOverflow": 0,
+    "livingCoreVisible": true,
+    "genesisCockpitPreserved": true
+  },
+  "memoryBefore": {
+    "eventCount": 13,
+    "memoryCount": 3,
+    "decisionCount": 1,
+    "objectionCount": 2,
+    "auditCount": 0,
+    "integrity": true,
+    "storageOnline": true,
+    "activeNav": [
+      "Memoria"
+    ],
+    "eventRows": 13,
+    "memoryRows": 3,
+    "overflow": 0
+  },
+  "memoryAfterActions": {
+    "eventCount": 22,
+    "memoryCount": 7,
+    "decisionCount": 2,
+    "objectionCount": 4,
+    "auditCount": 1,
+    "integrity": true,
+    "historian": "Memoria propia en construcciónNo hay precedentes persistidos anteriores para SOL/USDT. APEX no inventa similitudes.—",
+    "eventRows": 22,
+    "memoryRows": 7
+  },
+  "runtimeExceptions": 0,
+  "consoleErrors": [],
+  "persistence": {
+    "testedByReload": true,
+    "eventsRestored": true,
+    "memoryRestored": true,
+    "auditRestored": true,
+    "integrityAfterReload": true
+  }
+}

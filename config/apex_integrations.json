@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "1.0.0",
+  "externalAccountsEnabled": false,
+  "adapters": [
+    {"id":"market-binance-public","kind":"market_data","status":"enabled","mode":"public_read_only","label":"Binance Public Market Data"},
+    {"id":"openai-responses","kind":"intelligence","status":"configurable","mode":"server_side","label":"OpenAI Responses API"},
+    {"id":"openai-realtime","kind":"voice","status":"beta","mode":"server_proxy","label":"OpenAI Realtime Voice Bridge"},
+    {"id":"mt5","kind":"broker","status":"deferred","mode":"disabled","label":"MetaTrader 5 Adapter"},
+    {"id":"ibkr","kind":"broker","status":"deferred","mode":"disabled","label":"Interactive Brokers Adapter"},
+    {"id":"phantom","kind":"wallet","status":"deferred","mode":"disabled","label":"Phantom Wallet Adapter"},
+    {"id":"notifications","kind":"notification","status":"ready","mode":"browser_local","label":"Browser Notifications"}
+  ]
+}

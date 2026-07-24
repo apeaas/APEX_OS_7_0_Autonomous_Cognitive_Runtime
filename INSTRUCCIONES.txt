@@ -1,0 +1,262 @@
+APEX OS 7.0 — AUTONOMOUS COGNITIVE RUNTIME
+GUÍA DE INSTALACIÓN Y OPERACIÓN
+
+============================================================
+1. QUÉ ES ESTA ENTREGA
+============================================================
+
+APEX OS 7.0 es un paquete completo. Incluye:
+- Living Cockpit y Mission Control.
+- Market Intelligence e indicadores.
+- Thinking Engine, Case Engine, Fiscal e Historiador.
+- Governance, Constitución, Risk y límite autónomo del 5%.
+- Core Event Bus y memoria persistente.
+- IA online desde backend local.
+- Command Runtime global.
+- planificación, cola de acciones y autonomía PAPER gobernada.
+- push-to-talk del navegador y puente opcional de voz Realtime.
+- registry de integraciones y contrato para adapters futuros.
+- diagnóstico, backups, tests y documentación.
+
+No contiene ejecución live ni conexiones a cuentas externas. Eso está bloqueado deliberadamente.
+
+============================================================
+2. INSTALACIÓN LIMPIA
+============================================================
+
+A. Guardá APEX 6.2 como respaldo.
+B. Descomprimí el ZIP completo en una carpeta nueva.
+C. No mezcles archivos ni carpetas entre versiones.
+D. Instalá Node.js 18 o superior si todavía no lo tenés.
+E. Ejecutá start_apex.bat en Windows o ./start_apex.sh en macOS/Linux.
+F. Abrí siempre APEX en:
+   http://127.0.0.1:5500
+
+Usar el mismo navegador y perfil conserva el localStorage del cockpit de versiones anteriores.
+
+============================================================
+3. CONFIGURACIÓN DE IA
+============================================================
+
+En el primer inicio se crea .env desde .env.example.
+
+Configuración mínima:
+OPENAI_API_KEY=tu_clave
+OPENAI_MODEL=gpt-5.1
+OPENAI_REALTIME_MODEL=gpt-realtime
+APEX_HOST=127.0.0.1
+APEX_PORT=5500
+
+La clave vive únicamente en el backend local. No debe ir en index.html, assets/js ni capturas.
+
+Sin OPENAI_API_KEY:
+- APEX abre y conserva las funciones determinísticas locales.
+- No responde la IA online.
+- No se ejecutan ciclos cognitivos basados en modelo.
+
+============================================================
+4. MODOS DEL RUNTIME
+============================================================
+
+OBSERVE
+- Lee, explica, navega y consulta memoria.
+- No prepara ni ejecuta acciones autónomas.
+
+COPILOT
+- Crea casos, planes y tickets.
+- Las acciones sensibles requieren confirmación humana.
+
+PAPER AUTONOMOUS
+- Puede evaluar y encolar una única acción gobernada por ciclo.
+- Solo opera sobre el ledger PAPER local.
+- Risk y Governance validan cada acción.
+- Requiere la frase exacta: HABILITAR PAPER AUTO
+
+SUSPENDED
+- Detiene ciclos y acciones.
+- Se activa por kill switch, auditoría o decisión humana.
+
+Para reanudar después de una emergencia se exige:
+REANUDAR APEX
+
+============================================================
+5. LÍMITES CONSTITUCIONALES
+============================================================
+
+Locks no modificables por IA:
+- PAPER ONLY.
+- Live trading bloqueado.
+- Cuentas externas bloqueadas.
+- Retiros y transferencias bloqueados.
+- Firma de wallets bloqueada.
+- Techo autónomo humano: 5%.
+- La IA no puede elevar ese techo.
+- Stop y target obligatorios.
+- Sin averaging down.
+- Spot long-only en el runtime autónomo actual.
+- Kill switch prioritario.
+
+Límites configurables dentro del techo:
+- frecuencia del ciclo;
+- porcentaje de autonomía;
+- tamaño máximo por posición;
+- riesgo por operación;
+- pérdida diaria máxima;
+- confianza mínima;
+- R/R mínimo;
+- posiciones concurrentes;
+- cooldown;
+- activos autorizados;
+- permisos de abrir, cerrar y modificar protección.
+
+============================================================
+6. COMMAND RUNTIME
+============================================================
+
+Abrí la paleta con Ctrl + K o usá el chat principal.
+
+Ejemplos:
+- “Abrí Runtime y mostrame el presupuesto autónomo.”
+- “Analizá ETH y construí un caso.”
+- “Creá un plan intradía para BTC.”
+- “Prepará una operación PAPER con riesgo de 0,25%.”
+- “¿Por qué rechazaste la última operación?”
+- “Buscá objeciones relacionadas con SOL.”
+- “Ejecutá una autoauditoría.”
+- “Pausá Spot Hunter.”
+- “Exportá la memoria.”
+- “Activá el kill switch.”
+
+Las acciones de capital PAPER se presentan como acciones pendientes en COPILOT. Deben confirmarse después de armar PAPER COMMAND.
+
+============================================================
+7. VOZ
+============================================================
+
+Push-to-talk:
+- usa SpeechRecognition del navegador cuando está disponible;
+- transcribe al chat y pasa la orden por el mismo Command Runtime;
+- la respuesta puede leerse con síntesis del navegador.
+
+Realtime Voice opcional:
+- requiere OPENAI_API_KEY, micrófono y un navegador compatible con WebRTC;
+- abre un canal de voz natural con el backend local;
+- los comandos operativos siguen pasando por permisos, Risk, Governance y confirmaciones.
+
+La disponibilidad de reconocimiento de voz del navegador depende del navegador y del sistema operativo.
+
+============================================================
+8. PERSISTENCIA Y MEMORIA
+============================================================
+
+Cliente:
+- localStorage en el origen 127.0.0.1:5500.
+- portfolio PAPER, watchlist, agentes, casos y memoria de interfaz.
+
+Backend:
+- data/apex-runtime-state.json
+- data/apex-runtime-events.ndjson
+- data/apex-client-events.ndjson
+
+No edites esos archivos mientras APEX está abierto.
+
+Para respaldar:
+- ejecutá backup_apex.bat; o
+- ejecutá npm run backup.
+
+============================================================
+9. MIGRACIÓN DESDE 6.2
+============================================================
+
+El estado del navegador se conserva automáticamente si mantenés:
+- el mismo navegador;
+- el mismo perfil;
+- http://127.0.0.1:5500
+
+Para importar la memoria backend de la carpeta 6.2:
+node tools/migrate-from-6-2.js "C:\ruta\a\APEX_OS_6_2_AI_Command_Runtime"
+
+La herramienta crea un respaldo previo de los datos 7.0 antes de copiar.
+
+============================================================
+10. INTEGRACIONES FUTURAS
+============================================================
+
+La carpeta adapters contiene:
+- schema del manifiesto;
+- adapter nulo de seguridad;
+- contrato de capacidades;
+- instrucciones de implementación.
+
+Registry actual:
+- Binance Public Market Data: lectura pública.
+- OpenAI Responses: inteligencia configurable.
+- OpenAI Realtime: voz beta opcional.
+- notificaciones de navegador: disponibles.
+- MetaTrader 5: diferido y bloqueado.
+- Interactive Brokers: diferido y bloqueado.
+- Phantom Wallet: diferido y bloqueado.
+
+Un adapter futuro nunca debe saltarse Governance Gateway ni Risk Gateway.
+
+============================================================
+11. DIAGNÓSTICO Y TESTS
+============================================================
+
+Windows:
+diagnostico_apex.bat
+
+Terminal:
+npm run doctor
+npm test
+
+La batería revisa:
+- sintaxis;
+- contrato del frontend;
+- servidor y endpoints;
+- flujo de tool calling simulado;
+- modos, queue, planes, límites y kill switch.
+
+============================================================
+12. CIERRE Y REINICIO
+============================================================
+
+Para cerrar:
+- cerrá la ventana “APEX OS 7.0 Server”.
+
+Para reiniciar:
+- volvé a ejecutar start_apex.bat.
+
+No abras index.html con doble clic para usar IA o Runtime: el backend local es necesario.
+
+============================================================
+13. SOLUCIÓN DE PROBLEMAS
+============================================================
+
+Puerto 5500 ocupado:
+- cerrá Live Server u otra instancia de APEX.
+
+IA sin conexión:
+- revisá OPENAI_API_KEY en .env;
+- cerrá y reiniciá APEX;
+- mirá /api/health desde el navegador.
+
+Runtime sin snapshot:
+- mantené Mission Control abierto unos segundos;
+- revisá que no haya errores en la consola del navegador;
+- ejecutá diagnóstico.
+
+Voz no disponible:
+- permití micrófono;
+- probá Chrome o Edge actualizados;
+- usá chat escrito como fallback.
+
+Memoria no aparece:
+- confirmá que abrís 127.0.0.1:5500 y no localhost;
+- revisá que estés usando el mismo perfil de navegador.
+
+============================================================
+14. ESTADO DE PRODUCTO
+============================================================
+
+APEX OS 7.0 es un runtime local avanzado para investigación, decisión y autonomía PAPER. No es todavía una infraestructura aprobada para custodiar o mover patrimonio real. La etapa live queda expresamente diferida hasta completar validación estadística, seguridad, adapters, reconciliación de órdenes y auditoría independiente.

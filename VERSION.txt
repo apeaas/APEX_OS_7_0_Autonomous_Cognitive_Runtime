@@ -1,0 +1,9 @@
+APEX OS 7.0.0
+Codename: Autonomous Cognitive Runtime
+Release class: Master PAPER Runtime
+Execution: PAPER ONLY
+External accounts: DISABLED / DEFERRED
+Live trading: HARD LOCKED
+Human autonomy ceiling: 5%
+Default mode: OBSERVE
+Runtime modes: OBSERVE / COPILOT / PAPER AUTONOMOUS / SUSPENDED

@@ -1,0 +1,36 @@
+{
+  "schemaVersion": "1.0.0",
+  "executionMode": "PAPER_ONLY",
+  "defaultMode": "observe",
+  "humanAutonomyCeilingPct": 5,
+  "defaults": {
+    "cycleSeconds": 90,
+    "autonomyCapPct": 5,
+    "maxPositionPct": 1.5,
+    "riskPerTradePct": 0.25,
+    "dailyLossLimitPct": 1,
+    "minConfidence": 84,
+    "minRiskReward": 1.6,
+    "maxConcurrentPositions": 3,
+    "cooldownMinutes": 10,
+    "snapshotFreshnessSeconds": 45,
+    "allowedSymbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+    "allowOpen": true,
+    "allowClose": true,
+    "allowModifyProtection": true,
+    "allowGovernanceAudit": true,
+    "allowAgentControl": true,
+    "browserNotifications": true
+  },
+  "hardLocks": {
+    "liveTrading": false,
+    "externalAccounts": false,
+    "withdrawals": false,
+    "walletSigning": false,
+    "autonomyCeilingMutableByAI": false,
+    "allowAveragingDown": false,
+    "requireStop": true,
+    "requireTarget": true,
+    "longSpotOnly": true
+  }
+}

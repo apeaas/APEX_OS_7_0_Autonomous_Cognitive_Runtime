@@ -1,0 +1,30 @@
+APEX OS 7.0 — AUTONOMOUS COGNITIVE RUNTIME
+
+Este paquete es una instalación completa e independiente. No reemplaces carpetas internas de versiones anteriores.
+
+INICIO RÁPIDO EN WINDOWS
+1. Descomprimí todo el ZIP en una carpeta nueva.
+2. Ejecutá start_apex.bat.
+3. En el primer inicio se crea .env. Podés agregar OPENAI_API_KEY o continuar sin IA online.
+4. APEX abre en http://127.0.0.1:5500
+
+MODO SEGURO INICIAL
+- Arranca en OBSERVE.
+- PAPER ONLY.
+- Live trading, brokers, wallets, retiros y firmas están bloqueados.
+- El techo humano de autonomía es 5% y no puede elevarlo la IA.
+
+ANTES DE ACTIVAR PAPER AUTO
+- Usá COPILOT primero.
+- Revisá Runtime > Configuración.
+- Ejecutá una autoauditoría.
+- Verificá que el snapshot esté fresco.
+- Para activar autonomía PAPER se exige la frase exacta: HABILITAR PAPER AUTO
+- El kill switch está siempre disponible.
+
+UTILIDADES
+- diagnostico_apex.bat: valida instalación y locks.
+- backup_apex.bat: respalda memoria, configuración y .env.
+- npm test: ejecuta la batería técnica completa.
+
+Leé INSTRUCCIONES.txt para instalación, modos, comandos, migración y solución de problemas.

@@ -1,0 +1,11 @@
+{
+  "id": "null-broker",
+  "name": "APEX Null Broker",
+  "kind": "broker",
+  "version": "1.0.0",
+  "capabilities": ["health", "paper_order_contract", "idempotency_contract"],
+  "defaultMode": "disabled",
+  "requiresSecrets": [],
+  "healthEndpoint": "/api/integrations",
+  "notes": "Adapter contractual. No transmite órdenes ni conecta cuentas externas."
+}

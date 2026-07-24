@@ -1,0 +1,88 @@
+{
+  "1366": {
+    "scrollWidth": 1366,
+    "clientWidth": 1366,
+    "scrollHeight": 1028,
+    "core": {
+      "x": 543.125,
+      "y": 181,
+      "w": 273.734375,
+      "h": 286
+    },
+    "market": {
+      "x": 158,
+      "y": 181,
+      "w": 377.125,
+      "h": 286
+    },
+    "decision": {
+      "x": 824.859375,
+      "y": 181,
+      "w": 273.734375,
+      "h": 286
+    },
+    "alerts": {
+      "x": 1106.59375,
+      "y": 181,
+      "w": 249.390625,
+      "h": 286
+    },
+    "engineYSpread": 0,
+    "engineHeights": [
+      82
+    ],
+    "chatFont": "16px",
+    "chatPlaceholder": "16px",
+    "api": true,
+    "canvas": true,
+    "canvasMoves": true,
+    "marketOpens": true,
+    "evidenceOpens": true,
+    "drawerOpens": true,
+    "chatOpensOperations": true,
+    "errors": []
+  },
+  "1440": {
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "scrollHeight": 1028,
+    "core": {
+      "x": 566.90625,
+      "y": 181,
+      "w": 290.984375,
+      "h": 286
+    },
+    "market": {
+      "x": 158,
+      "y": 181,
+      "w": 400.90625,
+      "h": 286
+    },
+    "decision": {
+      "x": 865.890625,
+      "y": 181,
+      "w": 290.984375,
+      "h": 286
+    },
+    "alerts": {
+      "x": 1164.875,
+      "y": 181,
+      "w": 265.125,
+      "h": 286
+    },
+    "engineYSpread": 0,
+    "engineHeights": [
+      82
+    ],
+    "chatFont": "16px",
+    "chatPlaceholder": "16px",
+    "api": true,
+    "canvas": true,
+    "canvasMoves": true,
+    "marketOpens": true,
+    "evidenceOpens": true,
+    "drawerOpens": true,
+    "chatOpensOperations": true,
+    "errors": []
+  }
+}

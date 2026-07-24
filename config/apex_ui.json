@@ -1,0 +1,87 @@
+{
+  "version": "APEX OS 7.0",
+  "codename": "AI Command Runtime",
+  "experience": "Genesis Living Cockpit + Memory Foundation + AI Command",
+  "product_identity": "Patrimonial Operating System",
+  "default_view": "mission_control",
+  "target_viewports": [
+    "1366x768",
+    "1440x900",
+    "multi-monitor-ready"
+  ],
+  "design_system": {
+    "name": "APEX Design System v1",
+    "core_is_protagonist_not_monopoly": true,
+    "instrument_clusters": true,
+    "progressive_disclosure": true,
+    "single_active_workspace": true,
+    "minimum_chat_font_px": 16,
+    "minimum_chat_placeholder_px": 16,
+    "state_color_only": true,
+    "animation_must_communicate_process": true
+  },
+  "core_motion": {
+    "canvas_engine": true,
+    "css_fallback": true,
+    "state_driven_intensity": true,
+    "persistent_heartbeat": true,
+    "motion_verified": true
+  },
+  "workspaces": [
+    "market",
+    "thinking",
+    "governance",
+    "operations",
+    "memory"
+  ],
+  "visible_instruments": [
+    "engine_rack",
+    "market_radar",
+    "living_core",
+    "apex_decision",
+    "priority_alerts",
+    "strategies",
+    "positions",
+    "portfolio",
+    "investment_committee",
+    "activity_trace",
+    "active_agents",
+    "apex_copilot",
+    "persistent_event_trace",
+    "ai_command_status",
+    "ai_command_palette",
+    "voice_commander",
+    "pending_action_gate"
+  ],
+  "governance": {
+    "human_autonomy_ceiling_percent": 5,
+    "self_audit": true,
+    "self_reduction_or_suspension": true,
+    "self_increase_above_human_ceiling": false,
+    "paper_only": true,
+    "live_execution": false
+  },
+  "memory_foundation": {
+    "event_schema": "1.0.0",
+    "persistence": "localStorage",
+    "max_events": 1800,
+    "append_only_runtime": true,
+    "checksums": "FNV-1a",
+    "correlation_ids": true,
+    "safe_replay_without_side_effects": true,
+    "memory_domains": [
+      "decisions",
+      "objections",
+      "audits",
+      "outcomes",
+      "observations"
+    ]
+  },
+  "ai_command": {
+    "global_palette": true,
+    "shortcut": "Ctrl+K",
+    "push_to_talk": true,
+    "speech_output": true,
+    "paper_arm_per_session": true
+  }
+}

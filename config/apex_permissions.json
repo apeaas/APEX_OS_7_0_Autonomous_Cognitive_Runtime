@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "1.0.0",
+  "roles": {
+    "observer": ["read:*", "navigate:*", "explain:*"],
+    "copilot": ["observer", "prepare:case", "prepare:paper_trade", "manage:watchlist", "export:memory"],
+    "paper_autonomous": ["copilot", "execute:paper_open", "execute:paper_close", "execute:paper_modify", "audit:governance"],
+    "human_operator": ["paper_autonomous", "configure:runtime", "arm:autonomy", "emergency:stop"]
+  },
+  "confirmation": {
+    "copilot": ["execute:paper_open", "execute:paper_close", "execute:paper_modify", "manage:agents", "audit:governance"],
+    "paper_autonomous": ["change:runtime_mode", "change:risk_limits", "resume:after_emergency"]
+  }
+}

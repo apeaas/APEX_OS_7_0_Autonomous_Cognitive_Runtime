@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+
+<html lang="es">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<meta content="#070b16" name="theme-color"/>
+<title>APEX OS 7.0 · Autonomous Cognitive Runtime</title>
+<link href="assets/css/style.css" rel="stylesheet"/>
+<link href="assets/css/adaptive-cockpit.css" rel="stylesheet"/>
+<link href="assets/css/living-cockpit.css" rel="stylesheet"/>
+<link href="assets/css/genesis-god-mode.css" rel="stylesheet"/>
+<link href="assets/css/event-memory.css" rel="stylesheet"/>
+<link href="assets/css/ai-command.css" rel="stylesheet"/>
+<link href="assets/css/apex-7-runtime.css" rel="stylesheet"/></head>
+<body class="apex-genesis">
+<div class="ambient-grid"></div>
+<div class="app-shell" id="app">
+<aside class="sidebar genesis-sidebar">
+<div class="brand genesis-brand">
+<div class="brand-mark">A</div>
+<div><strong>APEX</strong><small>SISTEMA OPERATIVO PATRIMONIAL</small></div>
+</div>
+<nav aria-label="Espacios de trabajo" class="nav genesis-nav">
+<button class="nav-btn active" data-focus="decision"><span class="nav-icon">⌂</span><b>Misión</b></button>
+<button class="nav-btn" data-focus="market" data-open-panel="market"><span class="nav-icon">⌁</span><b>Mercados</b></button>
+<button class="nav-btn" data-focus="thinking" data-open-panel="thinking"><span class="nav-icon">⌕</span><b>Research</b></button>
+<button class="nav-btn" data-focus="thinking" data-open-panel="thinking"><span class="nav-icon">▣</span><b>Casos</b></button>
+<button class="nav-btn" data-focus="market" data-open-panel="market" data-scroll-target="portfolio"><span class="nav-icon">▤</span><b>Portfolio</b></button>
+<button class="nav-btn" data-focus="governance" data-open-panel="governance"><span class="nav-icon">◉</span><b>Autonomía</b></button>
+<button class="nav-btn" data-focus="automation" data-open-panel="operations"><span class="nav-icon">⌘</span><b>Agentes</b></button>
+<button class="nav-btn" data-focus="market" data-open-panel="market"><span class="nav-icon">♢</span><b>Alertas</b><em id="navAlertCount">0</em></button>
+<button class="nav-btn" data-focus="automation" data-open-panel="operations"><span class="nav-icon">↺</span><b>Historial</b></button>
+<button class="nav-btn" data-focus="memory" data-open-panel="operations" data-scroll-target="eventBusPanel"><span class="nav-icon">◆</span><b>Memoria</b></button>
+<button class="nav-btn" data-focus="thinking" data-open-panel="thinking"><span class="nav-icon">△</span><b>Lab</b></button>
+<button class="nav-btn" data-focus="governance" data-open-panel="governance"><span class="nav-icon">⚙</span><b>Configuración</b></button>
+</nav>
+<div class="sidebar-profile">
+<div class="profile-avatar">M</div>
+<div><strong>Mati</strong><small>Modo Paper</small></div>
+</div>
+<div class="system-rail genesis-system-rail">
+<div><span class="status-dot"></span><b id="feedStatus">Conectando</b></div>
+<small>REAL DATA · PAPER ONLY</small>
+</div>
+</aside>
+<main class="workspace">
+<header class="topbar genesis-topbar">
+<div class="topbar-title"><strong>CENTRO DE MANDO PATRIMONIAL Y OPERATIVO</strong><small id="commandLastSync">Síntesis en curso</small></div>
+<div class="topbar-center">
+<span class="market-open"><i></i>MERCADO ABIERTO</span>
+<span class="pill live" id="marketModePill">LIVE MARKET DATA</span>
+<span class="pill paper">PAPER EXECUTION</span>
+<span class="pill memory-pill" id="memoryModePill">MEMORY ONLINE</span>
+<button class="pill ai-command-pill offline" id="aiCommandPill" type="button">AI · OFFLINE</button>
+</div>
+<div class="topbar-tools">
+<div class="clock"><span id="currentDate">—</span><strong id="currentTime">--:--:--</strong></div>
+<div aria-label="Escala visual" class="density-switch">
+<button data-density="compact" title="Más compacto">A−</button>
+<button class="active" data-density="comfortable" title="Cómodo">A</button>
+<button data-density="large" title="Más grande">A+</button>
+</div>
+</div>
+</header>
+<section aria-label="APEX OS Genesis Mission Control" class="genesis-cockpit" id="decision">
+<div class="genesis-statusbar">
+<div><span class="status-beacon"></span><strong id="commandState">APEX OPERANDO NORMAL</strong><em id="coreActivityWord">OBSERVANDO</em></div>
+<div class="statusbar-right"><span><i></i>9 motores online</span><span><b id="corePackets">0</b> eventos persistidos</span><span>Latencia <strong id="latencyReadout">óptima</strong></span></div>
+</div>
+<div aria-label="Motores activos" class="engine-rack">
+<button class="engine-instrument engine-hunter" data-open-panel="market" type="button">
+<span class="engine-icon cyan">⌖</span><div><b>HUNTER</b><strong id="engineOpportunity">Online</strong><small id="engineOpportunityActivity">Escaneando universo...</small></div><svg preserveaspectratio="none" viewbox="0 0 140 28"><path d="M0 17 L12 17 L18 8 L23 22 L31 15 L46 16 L52 11 L57 18 L68 16 L76 15 L82 20 L92 10 L98 18 L111 15 L120 16 L127 12 L140 17"></path></svg>
+</button>
+<button class="engine-instrument engine-context" data-open-panel="thinking" type="button">
+<span class="engine-icon blue">◎</span><div><b>CONTEXT</b><strong id="engineFeed">Sync</strong><small id="engineFeedActivity">Interpretando régimen...</small></div><svg preserveaspectratio="none" viewbox="0 0 140 28"><path d="M0 18 L11 18 L18 10 L24 20 L34 17 L41 17 L47 12 L54 20 L63 17 L72 16 L78 19 L86 11 L94 19 L104 16 L114 17 L122 12 L140 18"></path></svg>
+</button>
+<button class="engine-instrument engine-risk" data-open-panel="governance" type="button">
+<span class="engine-icon amber">⬡</span><div><b>RISK</b><strong id="engineRisk">Normal</strong><small id="engineRiskActivity">Auditando límites...</small></div><svg preserveaspectratio="none" viewbox="0 0 140 28"><path d="M0 17 L15 17 L22 12 L28 20 L37 17 L49 17 L55 14 L63 19 L72 16 L80 16 L89 20 L98 12 L106 19 L115 16 L124 17 L132 14 L140 17"></path></svg>
+</button>
+<button class="engine-instrument engine-strategy" data-open-panel="thinking" type="button">
+<span class="engine-icon violet">♟</span><div><b>STRATEGY</b><strong id="engineStrategy">Activo</strong><small id="engineStrategyActivity">Comparando horizontes...</small></div><svg preserveaspectratio="none" viewbox="0 0 140 28"><path d="M0 18 L13 18 L20 8 L26 22 L35 16 L44 17 L51 10 L57 20 L67 16 L76 17 L84 12 L91 19 L101 16 L110 17 L120 11 L128 20 L140 17"></path></svg>
+</button>
+<button class="engine-instrument engine-portfolio" data-open-panel="market" data-scroll-target="portfolio" type="button">
+<span class="engine-icon green">▦</span><div><b>PORTFOLIO</b><strong id="enginePortfolio">Estable</strong><small id="enginePortfolioActivity">Sin concentración crítica.</small></div><svg preserveaspectratio="none" viewbox="0 0 140 28"><path d="M0 18 L12 18 L18 9 L24 21 L34 16 L46 17 L53 12 L60 19 L69 16 L78 17 L86 11 L93 20 L103 16 L113 17 L121 13 L128 19 L140 17"></path></svg>
+</button>
+<button class="engine-instrument engine-governance" data-open-panel="governance" type="button">
+<span class="engine-icon magenta">⚛</span><div><b>GOVERNANCE</b><strong id="engineBots">2/3</strong><small id="engineGovernanceActivity">Autoauditoría activa...</small></div><svg preserveaspectratio="none" viewbox="0 0 140 28"><path d="M0 18 L14 18 L20 11 L27 20 L37 16 L46 17 L53 12 L60 20 L70 16 L79 17 L86 10 L93 21 L103 16 L113 17 L121 12 L129 20 L140 17"></path></svg>
+</button>
+</div>
+<div class="mission-grid">
+<article class="instrument-panel market-board">
+<header class="panel-head"><div><span>MERCADO EN VIVO</span><strong>Radar cuantitativo</strong></div><button data-open-panel="market">Ver todos</button></header>
+<div class="market-timeframes"><b>1m</b><span>5m</span><span>15m</span><span>1h</span><span>4h</span><span>1d</span></div>
+<div class="market-table-head"><span>ACTIVO</span><span>PRECIO</span><span>VAR %</span><span>TENDENCIA</span></div>
+<button class="market-row" data-open-panel="market" data-symbol="BTCUSDT" type="button">
+<span class="asset-cell"><i class="coin-mark btc">₿</i><b>BTC/USDT</b><small id="cockpitBTCTrend">Analizando</small></span><strong id="cockpitBTCPrice">—</strong><em id="cockpitBTCChange">—</em><svg preserveaspectratio="none" viewbox="0 0 110 34"><path d="M0 17 L110 17" id="cockpitBTCSpark"></path></svg>
+<span class="market-row-metrics"><small>RSI <b id="cockpitBTCRsi">—</b></small><small>ATR <b id="cockpitBTCAtr">—</b></small><small>VOL <b id="cockpitBTCVol">—</b></small></span>
+</button>
+<button class="market-row" data-open-panel="market" data-symbol="ETHUSDT" type="button">
+<span class="asset-cell"><i class="coin-mark eth">Ξ</i><b>ETH/USDT</b><small id="cockpitETHTrend">Analizando</small></span><strong id="cockpitETHPrice">—</strong><em id="cockpitETHChange">—</em><svg preserveaspectratio="none" viewbox="0 0 110 34"><path d="M0 17 L110 17" id="cockpitETHSpark"></path></svg>
+<span class="market-row-metrics"><small>RSI <b id="cockpitETHRsi">—</b></small><small>ATR <b id="cockpitETHAtr">—</b></small><small>VOL <b id="cockpitETHVol">—</b></small></span>
+</button>
+<button class="market-row" data-open-panel="market" data-symbol="SOLUSDT" type="button">
+<span class="asset-cell"><i class="coin-mark sol">S</i><b>SOL/USDT</b><small id="cockpitSOLTrend">Analizando</small></span><strong id="cockpitSOLPrice">—</strong><em id="cockpitSOLChange">—</em><svg preserveaspectratio="none" viewbox="0 0 110 34"><path d="M0 17 L110 17" id="cockpitSOLSpark"></path></svg>
+<span class="market-row-metrics"><small>RSI <b id="cockpitSOLRsi">—</b></small><small>ATR <b id="cockpitSOLAtr">—</b></small><small>VOL <b id="cockpitSOLVol">—</b></small></span>
+</button>
+</article>
+<article class="instrument-panel core-board">
+<header class="panel-head core-panel-head"><div><span>APEX CORE</span><strong>Núcleo cognitivo</strong></div><span class="pulse-badge" id="coreMode">READY</span></header>
+<div class="living-core-stage genesis-core-stage" id="livingCoreStage">
+<canvas aria-hidden="true" id="livingCoreCanvas"></canvas>
+<span class="orbit-node node-1"></span><span class="orbit-node node-2"></span><span class="orbit-node node-3"></span><span class="orbit-node node-4"></span><span class="orbit-node node-5"></span><span class="orbit-node node-6"></span>
+<div class="core-visual live living-core genesis-core" id="coreVisual">
+<div class="ring ring-1"></div><div class="ring ring-2"></div><div class="ring ring-3"></div><div class="ring ring-4"></div>
+<div class="core-energy-halo"></div>
+<div class="core-center"><i></i><strong id="coreCenterText">84%</strong><span>CONFIANZA ACTUAL</span><small id="coreMicroState">EN PROCESO</small></div>
+</div>
+</div>
+<div class="core-telemetry genesis-core-telemetry"><span><i></i>En proceso</span><span id="coreSynthesisLabel">Última síntesis: ahora</span><span>Paper</span></div>
+</article>
+<article class="instrument-panel decision-board">
+<header class="panel-head"><div><span>DECISIÓN DE APEX</span><strong>Recomendación actual</strong></div><span class="pulse-badge">LIVE</span></header>
+<h2 id="decisionTitle">APEX sugiere: ESPERAR</h2>
+<p id="decisionText">Esperando confirmación clara antes de elevar exposición.</p>
+<div class="briefing-line" id="proactiveBriefing">El Cazador está filtrando el mercado y mostrará solo los casos que superen el umbral de calidad.</div>
+<div class="decision-metrics">
+<div><span>FOCO</span><strong id="focusAsset">ETH/USDT</strong></div><div><span>CONFIANZA</span><strong id="focusConfidence">84%</strong></div><div><span>RIESGO</span><strong id="focusRisk">Moderado</strong></div><div><span>VIGENCIA</span><strong id="focusValidity">20 min</strong></div>
+</div>
+<div class="decision-actions"><button class="btn primary" id="openEvidenceBtn">Ver evidencia completa</button><button class="btn secondary" id="askApexBtn">Preguntar a APEX</button><button class="btn ghost bordered" id="openTicketBtn">Abrir ticket paper</button></div>
+<div class="decision-footer-states"><span>Mercado <strong id="marketPulseState">Contexto lateral</strong></span><span>Riesgo <strong id="riskPulseState">Dentro de límites</strong></span></div>
+</article>
+<article class="instrument-panel alert-board">
+<header class="panel-head"><div><span>ALERTAS ACTIVAS</span><strong>Priority Queue</strong></div><em class="count-badge" id="watchCount">0</em></header>
+<div class="cockpit-alert-list" id="cockpitAlerts"><div><span class="alert-signal blue-signal"></span><p><strong>Radar inicializando</strong><small>Esperando datos de mercado</small></p><time>ahora</time></div></div>
+<button class="panel-link" data-open-panel="market">Ver todas las alertas <span>→</span></button>
+</article>
+</div>
+<div class="operations-grid-live">
+<article class="instrument-panel strategy-board">
+<header class="panel-head"><div><span>ESTRATEGIAS ACTIVAS</span><strong>Strategy Intelligence</strong></div><button data-open-panel="market">Ver todas</button></header>
+<div class="cockpit-strategy-table" id="cockpitStrategies">
+<div class="strategy-header"><span>ESTRATEGIA</span><span>TF</span><span>SEÑAL</span><span>CONFIANZA</span><span>ESTADO</span></div>
+<div class="cockpit-strategy-row" data-strategy-row="scalp"><strong>Scalp</strong><span>1m</span><b>—</b><em>—</em><small>Sincronizando</small></div>
+<div class="cockpit-strategy-row" data-strategy-row="intraday"><strong>Intraday</strong><span>15m</span><b>—</b><em>—</em><small>Sincronizando</small></div>
+<div class="cockpit-strategy-row" data-strategy-row="swing"><strong>Swing</strong><span>4h</span><b>—</b><em>—</em><small>Sincronizando</small></div>
+</div>
+</article>
+<article class="instrument-panel positions-board">
+<header class="panel-head"><div><span>POSICIONES ABIERTAS</span><strong>Paper Execution</strong></div><button data-open-panel="market" data-scroll-target="portfolio">Ver todas</button></header>
+<div class="cockpit-position-list" id="cockpitPositions"><div class="empty-instrument">Sin posiciones paper abiertas.</div></div>
+<button class="danger-action" data-open-panel="market" data-scroll-target="portfolio">GESTIONAR POSICIONES</button>
+</article>
+<article class="instrument-panel portfolio-board">
+<header class="panel-head"><div><span>PORTFOLIO PAPER</span><strong>Wealth Intelligence</strong></div><button data-open-panel="market" data-scroll-target="portfolio">Ver detalle</button></header>
+<div class="portfolio-equity"><div><span>CAPITAL TOTAL</span><strong>US$ 25.000</strong></div><div><span>EQUITY</span><strong id="equityValue">US$ 25.000</strong></div></div>
+<div class="portfolio-metrics"><div><span>EXPOSICIÓN</span><strong id="exposureValue">0%</strong></div><div><span>AUTONOMÍA</span><strong id="summaryAutonomy">5%</strong></div><div><span>TRUST</span><strong id="summaryTrust">84/100</strong></div><div><span>P&amp;L</span><strong id="summaryPnl">US$ 0</strong></div></div>
+<button class="panel-link refresh-link" id="refreshDecisionBtn">Actualizar lectura <span>↻</span></button>
+</article>
+</div>
+<div class="systems-grid-live">
+<article class="instrument-panel committee-board">
+<header class="panel-head"><div><span>COMITÉ DE APEX</span><strong>Investment Committee</strong></div><em class="online-label"><i></i>7 online</em></header>
+<div class="committee-grid">
+<button data-open-panel="market"><i class="cyan">⌖</i><span><b>Hunter</b><small id="summaryHunterTitle">Radar activo</small><em><strong id="summaryHunterCount">0</strong> casos · <u id="summaryHunterBest">buscando</u></em></span></button>
+<button data-open-panel="thinking"><i class="blue">◎</i><span><b>Context</b><small id="summaryCaseAsset">ETH/USDT</small><em><strong id="summaryConsensus">84%</strong> · <u id="summaryFiscal">revisión</u></em></span></button>
+<button data-open-panel="governance"><i class="amber">⬡</i><span><b>Risk</b><small id="summaryGovernanceState">NORMAL</small><em><strong id="summaryLicense">Paper</strong> · veto activo</em></span></button>
+<button data-open-panel="thinking"><i class="violet">♟</i><span><b>Strategy</b><small>2 escenarios</small><em>comparando horizontes</em></span></button>
+<button data-open-panel="market" data-scroll-target="portfolio"><i class="green">▦</i><span><b>Portfolio</b><small id="summaryEquity">US$ 25.000</small><em><strong id="summaryExposure">0%</strong> expuesto</em></span></button>
+<button data-open-panel="governance"><i class="magenta">⚛</i><span><b>Governance</b><small>Autonomía 5%</small><em>autoauditando</em></span></button>
+</div><span class="sr-only" id="summaryThinkingState">ANALIZANDO</span>
+</article>
+<article class="instrument-panel activity-board">
+<header class="panel-head"><div><span>ACTIVIDAD RECIENTE</span><strong>System Trace</strong></div><button data-open-panel="operations">Ver auditoría</button></header>
+<div class="cockpit-activity-list" id="cockpitActivity"><div class="empty-instrument">Inicializando trazabilidad...</div></div>
+</article>
+<article class="instrument-panel bots-board">
+<header class="panel-head"><div><span>AGENTES ACTIVOS</span><strong>Automation</strong></div><button data-open-panel="operations">Ver todos</button></header>
+<div class="genesis-bot-list" id="genesisBots"><div><i></i><span><b>Sentinela</b><small>Supervisando mercado</small></span><em>Activo</em></div><div><i></i><span><b>Spot Hunter</b><small>Escaneando oportunidades</small></span><em>Activo</em></div><div class="paused"><i></i><span><b>Sandbox</b><small>Pruebas experimentales</small></span><em>Pausado</em></div></div>
+</article>
+<article class="instrument-panel chat-board">
+<header class="panel-head"><div><span>CHAT CON APEX</span><strong>Copiloto</strong></div><button data-open-panel="operations" id="newChatShortcut">Nuevo chat</button></header>
+<p id="cockpitChatHint">Cuestioná una decisión, pedí evidencia o abrí un caso.</p>
+<div class="chat-mini-response"><span>APEX COMMAND</span><p id="cockpitChatAiPreview">Estoy observando el mercado. Puedo analizar, navegar y preparar acciones paper gobernadas.</p></div>
+<div class="quick-chat-row ai-upgraded"><button aria-label="Hablar con APEX" class="ai-mic" id="cockpitMicBtn" type="button">◉</button><input aria-label="Preguntá a APEX desde Mission Control" id="cockpitChatInput" placeholder="Decile qué querés analizar o hacer..." type="text"/><button aria-label="Enviar" class="btn primary" id="cockpitChatSend">➤</button></div>
+</article>
+</div>
+<footer class="cockpit-footer"><span>APEX OS 7.0 · AUTONOMOUS COGNITIVE RUNTIME</span><strong><i></i>DATOS EN VIVO CONECTADOS</strong><span>SERVIDOR: ÓPTIMO · PAPER ONLY</span></footer>
+</section>
+<section aria-live="polite" class="active-workspace-shell">
+<div class="workspace-placeholder" id="workspacePlaceholder">
+<span class="placeholder-mark">A</span>
+<div><strong>Mission Control está en modo síntesis.</strong><p>Abrí un módulo cuando necesites profundidad. La inteligencia sigue trabajando aunque los paneles estén cerrados.</p></div>
+</div>
+<section class="detail-workspace is-hidden" data-panel="market" id="marketWorkspace">
+<header class="detail-header">
+<div><p class="eyebrow">Deep Workspace</p><h2>Market Intelligence</h2><p>Radar, planes y capital. Todo lo operativo en un solo espacio.</p></div>
+<button aria-label="Cerrar espacio" class="close-workspace" data-close-panel="">×</button>
+</header>
+<div class="intelligence-grid adaptive-grid">
+<article class="glass-card market-panel" id="market">
+<div class="section-head"><div><p class="eyebrow">Market Intelligence</p><h3>Radar de mercado</h3></div><span class="micro-label">EMA · RSI · ATR · VOLUMEN</span></div>
+<div class="market-cards" id="marketCards"></div>
+</article>
+<details class="workspace-disclosure" open="">
+<summary><span><small>STRATEGY INTELLIGENCE</small><strong>Planes operables</strong></span><em>3 horizontes</em></summary>
+<article class="glass-card strategy-panel embedded-card" id="strategy">
+<div class="strategy-columns">
+<div class="strategy-col"><div class="strategy-top"><span>SCALP</span><strong id="scalpAsset">—</strong></div><div class="strategy-body" id="scalpBody"></div><button class="btn secondary strategy-ticket-btn" data-strategy="scalp">Ticket</button></div>
+<div class="strategy-col"><div class="strategy-top"><span>INTRADAY</span><strong id="intradayAsset">—</strong></div><div class="strategy-body" id="intradayBody"></div><button class="btn secondary strategy-ticket-btn" data-strategy="intraday">Ticket</button></div>
+<div class="strategy-col"><div class="strategy-top"><span>SWING</span><strong id="swingAsset">—</strong></div><div class="strategy-body" id="swingBody"></div><button class="btn secondary strategy-ticket-btn" data-strategy="swing">Ticket</button></div>
+</div>
+</article>
+</details>
+<details class="workspace-disclosure">
+<summary><span><small>WEALTH INTELLIGENCE</small><strong>Portfolio paper</strong></span><em id="portfolioSummaryLine">Sin exposición</em></summary>
+<article class="glass-card portfolio-panel embedded-card" id="portfolio">
+<div class="section-head"><div><p class="eyebrow">Wealth Intelligence</p><h3>Portfolio paper</h3></div><button class="text-btn danger" id="resetPaperBtn">Reset</button></div>
+<div class="portfolio-strip">
+<div><span>Liquidez</span><strong id="cashValue">US$ 25.000</strong></div>
+<div><span>P&amp;L</span><strong id="realizedValue">US$ 0</strong></div>
+<div><span>Win rate</span><strong id="winRateValue">0%</strong></div>
+</div>
+<div class="positions-list" id="positionsList"></div>
+</article>
+</details>
+</div>
+</section>
+<section class="detail-workspace thinking-workspace is-hidden" data-panel="thinking" id="thinking">
+<header class="detail-header">
+<div><p class="eyebrow">Deep Workspace</p><h2>Thinking Architecture</h2><p>Hipótesis, oposición, precedentes y decisión trazable.</p></div>
+<button aria-label="Cerrar espacio" class="close-workspace" data-close-panel="">×</button>
+</header>
+<article class="glass-card case-panel primary-detail-card">
+<div class="section-head"><div><p class="eyebrow">Thinking Engine</p><h3>Caso activo</h3></div><span class="pill live" id="caseStatus">EN ANÁLISIS</span></div>
+<div class="case-header">
+<div><span>EXPEDIENTE</span><strong id="caseId">CASE-0001</strong></div>
+<div><span>ACTIVO</span><strong id="caseAsset">ETH/USDT</strong></div>
+<div><span>HORIZONTE</span><strong id="caseHorizon">Intraday</strong></div>
+<div><span>CONSENSO</span><strong id="caseConsensus">84%</strong></div>
+</div>
+<div class="hypothesis-box"><span>HIPÓTESIS</span><h4 id="caseHypothesis">La estructura actual puede desarrollar continuidad alcista si confirma volumen y mantiene soporte.</h4></div>
+<div class="case-columns">
+<div class="evidence-column positive"><div class="column-title"><span>EVIDENCIA A FAVOR</span><b id="evidenceCount">3</b></div><div class="case-list" id="caseEvidence"></div></div>
+<div class="evidence-column negative"><div class="column-title"><span>CONTRAEVIDENCIA</span><b id="counterCount">2</b></div><div class="case-list" id="caseCounterEvidence"></div></div>
+</div>
+<div class="case-actions"><button class="btn primary" id="buildCaseBtn">Construir nuevo caso</button><button class="btn secondary" id="challengeCaseBtn">Interrogar al Fiscal</button><button class="btn ghost" id="archiveCaseBtn">Archivar</button></div>
+</article>
+<div class="disclosure-stack">
+<details class="deep-disclosure" open="">
+<summary><span><small>PROSECUTOR AGENT</small><strong>Fiscal de la tesis</strong></span><em id="prosecutorVerdictSummary">Objeción parcial</em></summary>
+<article class="glass-card prosecutor-panel embedded-card" id="prosecutorPanel">
+<div class="prosecutor-verdict"><span>VEREDICTO</span><strong id="prosecutorVerdict">OBJECIÓN PARCIAL</strong><p id="prosecutorSummary">La tesis es plausible, pero todavía depende de una confirmación de volumen.</p></div>
+<div class="objection-list" id="prosecutorObjections"></div>
+<div class="veto-strip"><span>VETO DURO</span><strong id="hardVetoState">NO ACTIVADO</strong></div>
+</article>
+</details>
+<details class="deep-disclosure">
+<summary><span><small>HISTORIAN AGENT</small><strong>Precedentes comparables</strong></span><em>Similitud <b id="historySimilaritySummary">78%</b></em></summary>
+<article class="glass-card historian-panel embedded-card">
+<div class="historian-list" id="historianMatches"></div>
+<div class="historian-footer"><span>SIMILITUD PROMEDIO</span><strong id="historySimilarity">78%</strong></div>
+</article>
+</details>
+<details class="deep-disclosure">
+<summary><span><small>COMMITTEE DELIBERATION</small><strong>Ruta de decisión</strong></span><em id="deliberationStateSummary">Deliberando</em></summary>
+<article class="glass-card deliberation-panel embedded-card">
+<div class="section-head"><div><p class="eyebrow">Committee Deliberation</p><h3>Separación de poderes</h3></div><span class="pill soft" id="deliberationState">DELIBERANDO</span></div>
+<div class="deliberation-flow" id="deliberationFlow"></div>
+<div class="decision-gate"><div><span>DECISIÓN PROPUESTA</span><strong id="caseDecision">ESPERAR CONFIRMACIÓN</strong></div><div><span>AUTONOMÍA</span><strong id="caseAutonomy">NO HABILITADA</strong></div></div>
+</article>
+</details>
+</div>
+</section>
+<section class="detail-workspace governance-workspace is-hidden" data-panel="governance" id="governance">
+<header class="detail-header">
+<div><p class="eyebrow">Deep Workspace</p><h2>Governance</h2><p>Autonomía, confianza, Constitución y auditoría del propio sistema.</p></div>
+<button aria-label="Cerrar espacio" class="close-workspace" data-close-panel="">×</button>
+</header>
+<article class="glass-card autonomy-panel primary-detail-card">
+<div class="section-head"><div><p class="eyebrow">Governance Engine</p><h3>Licencia de autonomía</h3></div><span class="pill paper">PAPER GOVERNANCE</span></div>
+<div class="autonomy-hero">
+<div class="autonomy-ring"><strong id="autonomyPercent">5%</strong><span>CAPITAL AUTÓNOMO</span></div>
+<div class="autonomy-copy"><h4>Autonomía autorizada, no riesgo autorizado</h4><p>APEX puede decidir dentro de este compartimento. Cada operación conserva límites propios de riesgo, exposición y pérdida.</p></div>
+</div>
+<div class="governance-metrics">
+<div><span>LICENCIA</span><strong id="licenseLevel">Nivel 3</strong></div>
+<div><span>TRUST SCORE</span><strong id="trustScore">84/100</strong></div>
+<div><span>ESTADO</span><strong id="autonomyState">Habilitada en paper</strong></div>
+<div><span>PRÓXIMA AUDITORÍA</span><strong id="nextAudit">24 h</strong></div>
+</div>
+<div class="autonomy-controls">
+<label><span>Techo de autonomía</span><input id="autonomySlider" max="5" min="0" step="0.5" type="range" value="5"/><b id="autonomySliderValue">5%</b></label>
+<button class="btn primary" id="runAuditBtn">Ejecutar autoauditoría</button>
+</div>
+</article>
+<div class="disclosure-stack governance-disclosures">
+<details class="deep-disclosure constitution-disclosure">
+<summary><span><small>APEX CONSTITUTION · v2.0</small><strong>Principios activos</strong></span><em>5 artículos · sin conflictos</em></summary>
+<article class="glass-card constitution-panel embedded-card">
+<div class="constitution-status"><span class="status-beacon"></span><strong>Constitución activa</strong><em>Última revisión: arquitectura Quantum I</em></div>
+<div class="constitution-list">
+<div><b>I</b><p><strong>Preservación primero.</strong><span>El patrimonio tiene prioridad sobre cualquier oportunidad.</span></p></div>
+<div><b>II</b><p><strong>Explicabilidad obligatoria.</strong><span>Ninguna decisión automática queda sin evidencia y trazabilidad.</span></p></div>
+<div><b>III</b><p><strong>Autonomía ganada.</strong><span>La licencia aumenta, se reduce o se suspende según desempeño auditado.</span></p></div>
+<div><b>IV</b><p><strong>Investigación radical.</strong><span>APEX explora ampliamente, pero opera dentro del presupuesto autorizado.</span></p></div>
+<div><b>V</b><p><strong>El desacuerdo importa.</strong><span>La oposición de un motor se analiza; nunca se descarta por comodidad.</span></p></div>
+</div>
+</article>
+</details>
+<details class="deep-disclosure">
+<summary><span><small>INVESTMENT COMMITTEE</small><strong>Agentes y autoridad</strong></span><em>7 agentes · 2 vetos duros</em></summary>
+<article class="glass-card agents-panel embedded-card">
+<div class="agent-matrix">
+<div><span>HUNTER</span><strong>Investiga</strong><em>Alerta / propone</em></div>
+<div><span>CONTEXT</span><strong>Interpreta</strong><em>Veto contextual</em></div>
+<div><span>STRATEGY</span><strong>Diseña</strong><em>Propone plan</em></div>
+<div><span>RISK</span><strong>Protege</strong><em>Veto duro</em></div>
+<div><span>PORTFOLIO</span><strong>Coordina</strong><em>Limita exposición</em></div>
+<div><span>EXECUTION</span><strong>Ejecuta</strong><em>Solo autorizado</em></div>
+<div><span>GOVERNANCE</span><strong>Audita</strong><em>Habilita / suspende</em></div>
+</div>
+</article>
+</details>
+<details class="deep-disclosure" open="">
+<summary><span><small>DECISION JOURNAL</small><strong>Diario de conciencia</strong></span><em id="journalSummary">Última decisión: ahora</em></summary>
+<article class="glass-card consciousness-panel embedded-card">
+<div class="section-head"><div><p class="eyebrow">Audit Layer</p><h3>Registro explicable</h3></div><button class="text-btn" id="exportJournalBtn">Exportar</button></div>
+<div class="decision-journal compact-journal" id="decisionJournal">
+<div><time>Ahora</time><p><strong>Marco de gobierno activado.</strong><span>Autonomía máxima: 5% del capital. Estado inicial: paper.</span></p></div>
+<div><time>Principio</time><p><strong>APEX se audita antes de ampliarse.</strong><span>Puede reducir o suspender su licencia; toda ampliación exige evidencia acumulada.</span></p></div>
+</div>
+</article>
+</details>
+</div>
+</section>
+<section class="detail-workspace operations-workspace is-hidden" data-panel="operations" id="operationsWorkspace">
+<header class="detail-header">
+<div><p class="eyebrow">Deep Workspace</p><h2>Operations &amp; Dialogue</h2><p>Agentes, conversación y trazabilidad operativa.</p></div>
+<button aria-label="Cerrar espacio" class="close-workspace" data-close-panel="">×</button>
+</header>
+<div class="operations-grid">
+
+<section class="memory-foundation" id="eventBusPanel">
+  <div class="memory-foundation-head">
+    <div><p class="eyebrow">APEX 7.0 FOUNDATION</p><h3>Core Event Bus, Memory &amp; AI Command</h3><p>Cada evidencia, objeción, auditoría, decisión y resultado paper queda persistido con identidad, correlación y checksum.</p></div>
+    <div class="memory-foundation-actions">
+      <button class="btn secondary" id="verifyIntegrityBtn">Verificar integridad</button>
+      <button class="btn primary" id="exportEventSnapshotBtn">Exportar snapshot</button>
+    </div>
+  </div>
+  <div class="memory-kpi-grid">
+    <div><span>EVENTOS</span><strong id="eventBusCount">0</strong><small>append-only</small></div>
+    <div><span>MEMORIAS</span><strong id="persistentMemoryCount">0</strong><small>recuperadas al iniciar</small></div>
+    <div><span>INTEGRIDAD</span><strong id="eventIntegrityState">ÍNTEGRA</strong><small id="integrityDetail">Checksum activo</small></div>
+    <div><span>ÚLTIMO EVENTO</span><strong id="lastEventId">—</strong><small>PAPER ONLY</small></div>
+  </div>
+  <div class="event-memory-grid">
+    <article class="glass-card event-bus-console">
+      <div class="section-head"><div><p class="eyebrow">Event Stream</p><h3>Flujo persistente</h3></div><button class="text-btn" id="replayLastCaseBtn">Reproducir último caso</button></div>
+      <div class="event-filter-row">
+        <select id="eventTypeFilter" aria-label="Filtrar por tipo"><option value="">Todos los eventos</option></select>
+        <select id="eventSourceFilter" aria-label="Filtrar por agente"><option value="">Todos los agentes</option></select>
+        <input id="eventSearchInput" type="search" placeholder="Buscar evento, activo o caso..." aria-label="Buscar eventos">
+      </div>
+      <div class="event-stream-list" id="eventStreamList"></div>
+      <div class="replay-result" id="replayResult">Replay seguro: reconstruye la secuencia sin repetir órdenes.</div>
+    </article>
+    <article class="glass-card persistent-memory-console">
+      <div class="section-head"><div><p class="eyebrow">Long-term Context</p><h3>Memoria persistente</h3></div><button class="text-btn" id="exportMemoryBtn">Exportar memoria</button></div>
+      <div class="memory-domain-grid">
+        <div><span>DECISIONES</span><strong id="memoryDecisionCount">0</strong></div>
+        <div><span>OBJECIONES</span><strong id="memoryObjectionCount">0</strong></div>
+        <div><span>AUDITORÍAS</span><strong id="memoryAuditCount">0</strong></div>
+        <div><span>RESULTADOS</span><strong id="memoryOutcomeCount">0</strong></div>
+      </div>
+      <div class="memory-record-list" id="memoryRecordList"></div>
+      <div class="event-inspector" id="eventInspector"><strong>Inspector de eventos</strong><span>Seleccioná un evento para ver su payload y checksum.</span></div>
+    </article>
+  </div>
+</section>
+<article class="glass-card context-panel primary-chat-card">
+<div class="section-head"><div><p class="eyebrow">Command + Intelligence</p><h3>APEX AI Commander</h3></div><span class="pill soft" id="chatStatus">READY</span></div>
+<div class="ai-command-console">
+  <div class="ai-runtime-head">
+    <div class="ai-runtime-title"><span class="ai-runtime-orb">A</span><div><strong id="aiRuntimeState">AI · OFFLINE</strong><span>Modelo <b id="aiModelName">—</b> · <em id="aiRuntimePulse">LOCAL</em></span></div></div>
+    <div class="ai-runtime-tools">
+      <button id="aiArmBtn" type="button">Armar PAPER</button>
+      <button id="aiMicBtn" type="button">Hablar</button>
+      <button id="aiSpeakBtn" type="button">Voz OFF</button>
+    </div>
+  </div>
+  <div class="ai-safety-line"><span><i></i>PAPER ONLY</span><span><i></i>Confirmación para capital</span><span><i></i>Risk + Governance con veto</span><span><i></i>Cuentas externas deshabilitadas</span></div>
+  <div class="voice-transcript" id="voiceTranscript">Podés hablar o escribir. “Confirmo” ejecuta solo la acción paper pendiente.</div>
+  <div class="ai-pending-actions" id="aiPendingActions"><div class="ai-pending-empty">Sin acciones pendientes.</div></div>
+</div>
+<div class="chat-empty-prompt"><strong>Comandá toda la plataforma.</strong><span>Analizá, abrí módulos, construí casos, prepará tickets o administrá posiciones paper desde lenguaje natural.</span></div>
+<div class="chat-messages" id="chatMessages"></div>
+<div aria-label="Comandos sugeridos" class="prompt-suggestions">
+<button data-chat-prompt="Analizá BTC y construí un caso si hay evidencia suficiente.">Analizá y construí caso</button>
+<button data-chat-prompt="Mostrame mi portfolio y explicame el riesgo actual.">Revisá portfolio</button>
+<button data-chat-prompt="Prepará un ticket paper para ETH, sin ejecutarlo.">Prepará ticket</button>
+<button data-chat-prompt="Abrí la memoria y explicame la última decisión.">Memoria + decisión</button>
+</div>
+<div class="chat-input-row ai-upgraded">
+<button aria-label="Dictar comando" class="btn secondary ai-mic" id="chatMicProxy" type="button">◉</button>
+<input aria-label="Comandá APEX" autocomplete="off" id="chatInput" placeholder="Ej.: cerrá la mitad de ETH y explicame el impacto..." type="text">
+<button class="btn primary" id="sendChatBtn">Enviar</button>
+</input></div>
+<span class="chat-shortcut">Atajos: / para escribir · Ctrl+K para Command Palette · Esc para cerrar</span>
+</article>
+<details class="deep-disclosure" open="">
+<summary><span><small>AUTOMATION</small><strong>Agentes operativos</strong></span><em>Paper only</em></summary>
+<article class="glass-card bots-panel embedded-card" id="automation"><div class="bots-list" id="botsList"></div></article>
+</details>
+<details class="deep-disclosure">
+<summary><span><small>AUDIT LAYER</small><strong>Actividad del sistema</strong></span><em>Eventos recientes</em></summary>
+<article class="glass-card activity-panel embedded-card" id="activity">
+<div class="section-head"><div><p class="eyebrow">Audit Layer</p><h3>Actividad</h3></div><button class="text-btn" id="exportCsvBtn">CSV</button></div>
+<div class="activity-log" id="activityLog"></div>
+</article>
+</details>
+</div>
+</section>
+</section>
+</main>
+</div>
+<div aria-labelledby="evidenceTitle" aria-modal="true" class="modal hidden" id="evidenceModal" role="dialog">
+<div class="modal-card">
+<div class="modal-head"><div><p class="eyebrow">Centro de evidencia</p><h3 id="evidenceTitle">ETH/USDT</h3></div><button aria-label="Cerrar" class="icon-btn" id="closeEvidenceBtn">×</button></div>
+<div class="evidence-grid-big" id="evidenceGrid"></div>
+<div class="modal-actions"><button class="btn primary" id="evidenceTicketBtn">Cargar ticket</button><button class="btn secondary" id="evidenceAskBtn">Preguntar a APEX</button></div>
+</div>
+</div>
+<aside aria-hidden="true" class="drawer" id="tradeDrawer">
+<div class="drawer-head"><div><p class="eyebrow">Execution Center</p><h3>Ticket paper</h3></div><button aria-label="Cerrar" class="icon-btn" id="closeDrawerBtn">×</button></div>
+<div class="drawer-body">
+<div class="drawer-asset"><span>Activo</span><strong id="drawerAsset">ETH/USDT</strong></div>
+<div class="drawer-grid">
+<label><span>Modo</span><select id="modeSelect"><option>Manual</option><option selected="">Asistido</option></select></label>
+<label><span>Tipo</span><select id="typeSelect"><option>Mercado</option><option selected="">Límite</option></select></label>
+<label><span>Capital US$</span><input id="capitalInput" min="1" step="1" type="number" value="500"/></label>
+<label><span>Entrada</span><input id="entryInput" min="0" step="0.01" type="number" value="0"/></label>
+<label><span>Stop</span><input id="stopInput" min="0" step="0.01" type="number" value="0"/></label>
+<label><span>Target</span><input id="targetInput" min="0" step="0.01" type="number" value="0"/></label>
+</div>
+<div class="ticket-result" id="ticketResult">Completá el ticket y validalo con el Risk Engine.</div>
+<button class="btn primary wide" id="validateTradeBtn">Validar con Risk Engine</button>
+</div>
+</aside>
+
+<button class="ai-command-launcher" id="aiCommandLauncher" type="button" aria-label="Abrir AI Command Palette"><b>A</b><span>AI COMMAND</span><kbd>Ctrl K</kbd></button>
+<div class="ai-command-palette hidden" id="aiCommandPalette" role="dialog" aria-modal="true" aria-labelledby="aiPaletteTitle">
+  <div class="ai-palette-card">
+    <div class="ai-palette-head"><div><strong id="aiPaletteTitle">APEX AI Command Palette</strong><span>PAPER ONLY · toda acción sensible requiere confirmación</span></div><button id="closeAiPalette" type="button" aria-label="Cerrar">×</button></div>
+    <div class="ai-palette-input"><button id="paletteMicBtn" type="button" aria-label="Hablar">◉</button><input id="aiPaletteInput" type="text" placeholder="Analizá, navegá o prepará una acción..." autocomplete="off"><button id="aiPaletteSend" type="button">Enviar</button></div>
+    <div class="ai-palette-response" id="aiPaletteResponse">Ejemplos: “abrí governance”, “construí un caso para BTC”, “prepará un ticket paper”, “cerrá 50% de la posición ETH”.</div>
+    <div class="ai-palette-hints"><span>La IA no controla cuentas externas.</span><span>No puede elevar la autonomía del 5%.</span><span>Live trading bloqueado.</span></div>
+  </div>
+</div>
+<div aria-live="polite" class="apex-toast" id="apexToast" role="status"></div>
+<script src="assets/js/apex-event-bus.js"></script>
+<script src="assets/js/app.js"></script>
+<script src="assets/js/adaptive-cockpit.js"></script>
+<script src="assets/js/living-cockpit.js"></script>
+<script src="assets/js/genesis-god-mode.js"></script>
+<script src="assets/js/apex-memory-ui.js"></script>
+<script src="assets/js/apex-ai-command.js"></script>
+<script src="assets/js/apex-7-runtime.js"></script></body>
+</html>
