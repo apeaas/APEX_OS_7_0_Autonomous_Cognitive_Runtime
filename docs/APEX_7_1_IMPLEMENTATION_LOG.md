@@ -350,3 +350,74 @@ modelar el aporte autónomo inicial fijo.
 
 `PASS`. Safety Kernel, Constitución, Unified Risk y Fondo PAPER operativos y
 auditables.
+
+## Gate 4 — Decision Contracts, Confirmations and Governance
+
+### Objetivo
+
+Normalizar intents y decisiones, hacer visible y no reutilizable la confirmación
+humana y colocar Governance entre Risk y cualquier efecto PAPER.
+
+### Implementación
+
+- Contrato versionado `OpportunityIntent` con ventana temporal, provenance,
+  evidence, feed/frescura y scores que aceptan `null`/`unknown` sin inventar
+  porcentajes.
+- Un evento confirmado no vuelve operable un intent: feed trusted, freshness,
+  expiración y calidad de entrada conservan semántica independiente.
+- Thinking puede conservar investigación degradada, pero Governance produce
+  `operable=false` y `UNTRUSTED_MARKET_DATA`.
+- `CommandDraft` se liga a sesión y fingerprint exacto del comando, expira y
+  muestra acción, símbolo, posición, tamaño, entry/stop/target/exit, feed,
+  expiración y consecuencia exclusivamente PAPER.
+- `HumanConfirmation` se liga a `sessionId` y `draftId`, expira, compara el
+  fingerprint del comando y sólo puede consumirse una vez. Un retry con la
+  misma idempotency key recupera el efecto sin duplicarlo; otra key se rechaza.
+- Endpoints:
+  `POST /api/decision/drafts`,
+  `POST /api/decision/drafts/:id/confirm`,
+  `GET /api/governance/policy`.
+- `GovernanceEngine` consume Safety, Constitución, Risk, kill switch,
+  feed/frescura, expiración, evidencia, autoridad y Fondo, con salidas
+  `approve`, `reduce`, `delay`, `reject`, `veto`.
+- Pipeline humano/assistant efectivo:
+  `CommandDraft → visual confirmation → session-bound HumanConfirmation →
+  Unified Risk → Governance → PAPER ledger`.
+- `POST /api/paper/commands` rechaza comandos humanos sin draft/confirmación.
+- La autonomía sólo sustituye la confirmación individual cuando presenta el
+  claim vigente de la acción exacta, con sesión, claimId, nonce, expiración y
+  argumentos coincidentes. Su idempotency key de ledger deriva de `actionId`.
+- El cliente PAPER usa un diálogo visible y no posee una ruta privilegiada.
+
+### Archivos
+
+- Creados:
+  `lib/decision-contracts/contracts.js`,
+  `lib/governance/contracts.js`,
+  `lib/governance/engine.js`,
+  `lib/governance/confirmations.js`,
+  `tests-decision-governance.js`.
+- Modificados:
+  `server.js`, `lib/runtime-security/contracts.js`,
+  `assets/js/paper-portfolio-client.js`, `assets/js/apex-7-runtime.js`,
+  `assets/js/app.js`, `package.json`, `tests-smoke.js`.
+
+### Pruebas
+
+- 32 aserciones de contratos/Governance: scores desconocidos, provenance,
+  operabilidad y expiración, feed degradado, draft disclosure, confirmación
+  ausente/ajena/expirada/reutilizada, mismatch de comando, retry idempotente,
+  live veto, Risk reduce, Thinking no operable y autonomía sin fondo.
+- Smoke confirma que command API rechaza mutación sin confirmación.
+- `npm.cmd test`: 9/9 suites OK, exit 0, duración 26.790 ms.
+
+### Riesgos y deuda
+
+- Drafts y confirmaciones son efímeros y rotan al reiniciar, igual que la sesión;
+  los eventos relevantes se reflejan en auditoría del runtime.
+- La UI usa un diálogo nativo deliberadamente simple; Gate 6 lo integrará en la
+  consola persistente de voz/texto sin cambiar contratos.
+
+### Resultado
+
+`PASS`. Contratos, confirmación y Governance impiden autoridad paralela.

@@ -247,7 +247,13 @@
   async function executeAutonomousAction(action) {
     const api = window.APEX_API;
     if (!api) return { ok: false, message: "APEX_API no disponible." };
-    const args = action.arguments || {};
+    const args = {
+      ...(action.arguments || {}),
+      source: "AUTONOMOUS_RUNTIME",
+      actionId: action.id,
+      claimId: action.claim?.claimId,
+      claimNonce: action.claim?.nonce,
+    };
     try {
       let result;
       switch (action.name) {

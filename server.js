@@ -25,6 +25,8 @@ const { ConstitutionRegistry } = require("./lib/constitution/registry");
 const { RiskEngine } = require("./lib/risk/engine");
 const { explainRiskDecision } = require("./lib/risk/explain");
 const { hardLocks: safetyHardLocks } = require("./lib/safety-kernel/invariants");
+const { ConfirmationRegistry } = require("./lib/governance/confirmations");
+const { GovernanceEngine } = require("./lib/governance/engine");
 const marketQuality = require("./assets/js/market-quality");
 
 const ROOT = __dirname;
@@ -68,6 +70,8 @@ const constitutionRegistry = new ConstitutionRegistry({
 });
 const activeConstitution = constitutionRegistry.active();
 const riskEngine = new RiskEngine({ constitution: activeConstitution });
+const governanceEngine = new GovernanceEngine({ constitution: activeConstitution });
+const confirmationRegistry = new ConfirmationRegistry();
 const autonomousFund = new AutonomousFundService({ store: paperEventStore, snapshots: paperSnapshotStore });
 const sessionManager = new SessionManager({
   ttlMs: Number(process.env.APEX_SESSION_TTL_MS || 20 * 60 * 1000),
@@ -288,6 +292,14 @@ const server = http.createServer(async (req, res) => {
         profiles: activeConstitution.riskProfiles,
       });
     }
+    if (req.method === "GET" && url.pathname === "/api/governance/policy") {
+      return sendJson(res, 200, {
+        ok: true,
+        policyVersion: "governance.v1",
+        constitutionVersion: activeConstitution.version,
+        hierarchy: ["safety-kernel", "constitution", "governance", "risk", "human-confirmation", "paper-ledger"],
+      });
+    }
     if (req.method === "GET" && url.pathname === "/api/market/history") {
       const symbol = normalizeSymbol(url.searchParams.get("symbol"));
       const history = marketGateway.history(symbol);
@@ -367,13 +379,46 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, exportRuntimeSnapshot());
     }
 
+    if (req.method === "POST" && url.pathname === "/api/decision/drafts") {
+      const payload = await readJson(req);
+      const quality = marketGateway.status().quality;
+      const symbol = normalizeSymbol(payload.command.symbol);
+      const draft = confirmationRegistry.createDraft(payload.command, {
+        sessionId: req.apexSecurity.session.sessionId,
+        feedEvidence: {
+          status: quality?.status || "unknown",
+          trusted: Boolean(quality?.trusted),
+          symbol,
+          symbolFresh: Boolean(quality?.symbols?.[symbol]?.trusted),
+          expiresAt: quality?.symbols?.[symbol]?.expiresAt || null,
+        },
+      });
+      appendRuntimeEvent("COMMAND_DRAFT_CREATED", { draftId: draft.id, sessionId: draft.sessionId, interpretation: draft.interpretation }, "info");
+      return sendJson(res, 201, { ok: true, draft });
+    }
+
+    const confirmDraftMatch = url.pathname.match(/^\/api\/decision\/drafts\/([^/]+)\/confirm$/);
+    if (req.method === "POST" && confirmDraftMatch) {
+      const payload = await readJson(req);
+      const confirmation = confirmationRegistry.confirm(confirmDraftMatch[1], payload, {
+        sessionId: req.apexSecurity.session.sessionId,
+      });
+      appendRuntimeEvent("HUMAN_CONFIRMATION_RECORDED", { draftId: confirmation.draftId, confirmationId: confirmation.id, sessionId: confirmation.sessionId }, "warning");
+      return sendJson(res, 200, { ok: true, confirmation });
+    }
+
     if (req.method === "POST" && url.pathname === "/api/paper/commands") {
       const payload = await readJson(req);
-      const riskDecision = evaluatePaperRisk(payload, riskProfileFor(payload));
+      const authorization = authorizePaperCommand(payload, req.apexSecurity);
+      const profile = authorization.autonomous ? "autonomous" : riskProfileFor(payload);
+      const riskDecision = evaluatePaperRisk(payload, profile);
       enforceRiskDecision(riskDecision);
+      const governanceDecision = evaluatePaperGovernance(payload, riskDecision, authorization);
+      enforceGovernanceDecision(governanceDecision);
       const approved = riskDecision.decision === "reduce" ? { ...payload, capital: riskDecision.approvedSize } : payload;
       const result = paperCommands.execute(approved, paperCommandContext(req, approved, riskDecision));
-      return sendJson(res, 200, { ...result, riskDecision, riskExplanation: explainRiskDecision(riskDecision) });
+      appendRuntimeEvent("GOVERNED_PAPER_COMMAND_COMPLETED", { commandType: payload.type, riskDecision, governanceDecision, ledgerVersion: result.projection.version }, "success");
+      return sendJson(res, 200, { ...result, riskDecision, governanceDecision, riskExplanation: explainRiskDecision(riskDecision) });
     }
 
     if (req.method === "POST" && url.pathname === "/api/portfolio/import") {
@@ -811,6 +856,65 @@ function trustedMarketPrices() {
   return Object.fromEntries(Object.entries(snapshot.symbols || {}).map(([symbol, value]) => [symbol, value?.ticker?.price]).filter(([, price]) => Number.isFinite(Number(price)) && Number(price) > 0));
 }
 
+function authorizePaperCommand(payload, security) {
+  const sessionId = security.session.sessionId;
+  if (String(payload.source || "").toUpperCase() === "AUTONOMOUS_RUNTIME") {
+    const action = runtime.queue.find(item => item.id === payload.actionId);
+    const claim = action?.claim;
+    const expectedName = {
+      open_position: "execute_paper_trade",
+      close_position: "close_paper_position",
+      modify_position: "modify_paper_position",
+    }[payload.type];
+    const valid = action
+      && action.status === "claimed"
+      && action.name === expectedName
+      && claim
+      && claim.sessionId === sessionId
+      && claim.claimId === payload.claimId
+      && secureStringEqual(claim.nonce, payload.claimNonce)
+      && Date.parse(claim.expiresAt) > Date.now()
+      && claimMatchesCommand(action, payload);
+    if (!valid) {
+      const error = new Error("La autonomía requiere un claim vigente, ligado a sesión y al comando exacto.");
+      error.code = "VALID_ACTION_CLAIM_REQUIRED";
+      error.statusCode = 403;
+      throw error;
+    }
+    return { autonomous: true, validClaim: true, actionId: action.id };
+  }
+  if (!payload.draftId || !payload.confirmationId) {
+    const error = new Error("El comando requiere CommandDraft y HumanConfirmation vigentes.");
+    error.code = "HUMAN_CONFIRMATION_REQUIRED";
+    error.statusCode = 403;
+    throw error;
+  }
+  const consumed = confirmationRegistry.consume(payload.draftId, payload.confirmationId, payload, {
+    sessionId,
+    idempotencyKey: security.idempotencyKey,
+  });
+  return { autonomous: false, validClaim: false, ...consumed };
+}
+
+function claimMatchesCommand(action, command) {
+  const expected = action.arguments || {};
+  const pairs = command.type === "open_position"
+    ? [["symbol", "symbol"], ["capital", "capital"], ["entry", "entry"], ["stop", "stop"], ["target", "target"]]
+    : command.type === "close_position"
+      ? [["trade_id", "positionId"], ["fraction", "fraction"]]
+      : [["trade_id", "positionId"], ["stop", "stop"], ["target", "target"]];
+  return pairs.every(([actionKey, commandKey]) => {
+    if (expected[actionKey] == null && command[commandKey] == null) return true;
+    return String(expected[actionKey]) === String(command[commandKey]);
+  });
+}
+
+function secureStringEqual(left, right) {
+  const first = Buffer.from(String(left || ""));
+  const second = Buffer.from(String(right || ""));
+  return first.length === second.length && crypto.timingSafeEqual(first, second);
+}
+
 function evaluatePaperRisk(intent, profile) {
   const portfolio = paperQueries.portfolio(trustedMarketPrices());
   const marketStatus = marketGateway.status();
@@ -836,12 +940,41 @@ function evaluatePaperRisk(intent, profile) {
   });
 }
 
+function evaluatePaperGovernance(intent, riskDecision, authorization) {
+  const status = marketGateway.status();
+  const symbol = normalizeSymbol(intent.symbol);
+  const marketDependent = ["open_position", "close_position", "modify_position"].includes(intent.type);
+  autonomousFund.refresh();
+  return governanceEngine.evaluate({ intent: {
+    ...intent,
+    executionMode: "PAPER_ONLY",
+    stage: activeConstitution.stage,
+  }, riskDecision }, {
+    autonomous: authorization.autonomous,
+    validClaim: authorization.validClaim,
+    killSwitch: runtime.emergencyStop,
+    feedTrusted: Boolean(status.quality?.trusted),
+    symbolFresh: Boolean(status.quality?.symbols?.[symbol]?.trusted ?? status.quality?.trusted),
+    marketDependent,
+    fund: autonomousFund.current(),
+  });
+}
+
 function enforceRiskDecision(decision) {
   if (["approve", "reduce"].includes(decision.decision)) return;
   const error = new Error(`Risk ${decision.decision}: ${decision.reasons.join(", ")}.`);
   error.code = decision.decision === "delay" ? "RISK_DELAYED" : "RISK_REJECTED";
   error.statusCode = 409;
   error.riskDecision = decision;
+  throw error;
+}
+
+function enforceGovernanceDecision(decision) {
+  if (["approve", "reduce"].includes(decision.decision) && decision.operable) return;
+  const error = new Error(`Governance ${decision.decision}: ${decision.reasons.join(", ")}.`);
+  error.code = decision.decision === "veto" ? "GOVERNANCE_VETO" : "GOVERNANCE_REJECTED";
+  error.statusCode = 409;
+  error.governanceDecision = decision;
   throw error;
 }
 
@@ -853,13 +986,16 @@ function riskProfileFor(payload) {
 }
 
 function paperCommandContext(req, payload = {}, riskDecision = null) {
+  const autonomousKey = String(payload.source || "").toUpperCase() === "AUTONOMOUS_RUNTIME" && payload.actionId
+    ? `autonomous-action:${payload.actionId}`
+    : req.apexSecurity.idempotencyKey;
   return {
-    idempotencyKey: req.apexSecurity.idempotencyKey,
+    idempotencyKey: autonomousKey,
     sessionId: req.apexSecurity.session.sessionId,
     actor: { type: "human_operator", id: req.apexSecurity.session.sessionId },
     authority: "human_operator",
-    correlationId: String(payload.correlationId || req.apexSecurity.idempotencyKey).slice(0, 160),
-    causationId: String(payload.causationId || req.apexSecurity.idempotencyKey).slice(0, 160),
+    correlationId: String(payload.correlationId || autonomousKey).slice(0, 160),
+    causationId: String(payload.causationId || autonomousKey).slice(0, 160),
     policyVersion: riskDecision?.policyVersion || "paper-ledger.v1",
     killSwitch: runtime.emergencyStop,
   };

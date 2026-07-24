@@ -1067,6 +1067,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const riskAmt = capital * ((entry - stop) / entry);
     const result = await window.APEX_PAPER_PORTFOLIO.open({
       symbol, capital, entry, stop, target, source: input.source || "AI_COMMAND",
+      actionId: input.actionId, claimId: input.claimId, claimNonce: input.claimNonce,
     });
     const id = result.positionId;
     const approvedCapital = Number(result.riskDecision?.approvedSize || capital);
@@ -1102,6 +1103,7 @@ document.addEventListener("DOMContentLoaded", () => {
       exit: current,
       reason: input.rationale || `AI close ${Math.round(fraction * 100)}%`,
       source: input.source || "AI_COMMAND",
+      actionId: input.actionId, claimId: input.claimId, claimNonce: input.claimNonce,
     });
     const pnl = result.realizedPnL;
     emitEvent("PAPER_TRADE_CLOSED", { tradeId: position.id, symbol: position.symbol, fraction, exit: current, pnl, reason: input.rationale || "AI command", ledgerVersion: result.projection.version, executionMode: "PAPER_ONLY" }, { source: "PAPER_LEDGER", category: "execution", severity: pnl >= 0 ? "success" : "warning", symbol: position.symbol, correlationId: position.id });
@@ -1123,6 +1125,7 @@ document.addEventListener("DOMContentLoaded", () => {
       target,
       reason: input.rationale || "",
       source: input.source || "AI_COMMAND",
+      actionId: input.actionId, claimId: input.claimId, claimNonce: input.claimNonce,
     });
     emitEvent("PAPER_POSITION_PROTECTION_MODIFIED", { tradeId: position.id, symbol: position.symbol, stop, target, current, rationale: input.rationale || "", ledgerVersion: result.projection.version, executionMode: "PAPER_ONLY" }, { source: "PAPER_LEDGER", category: "execution", severity: "success", symbol: position.symbol, correlationId: position.id });
     return { ok: true, tradeId: position.id, ledgerVersion: result.projection.version, message: `Protección PAPER actualizada en ${SYMBOLS[position.symbol].label}: stop ${fmtPrice(stop)}, target ${fmtPrice(target)}.` };

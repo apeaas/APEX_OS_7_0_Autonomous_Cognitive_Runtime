@@ -60,7 +60,14 @@ child.stdout.on("data", async chunk => {
       body: JSON.stringify({ type: "open_position", symbol: "ETHUSDT", capital: 100, entry: 100, stop: 95, target: 110, expectedVersion: paperResult.projection.version }),
     });
     const blockedPaperBody = await blockedPaper.json();
-    if (blockedPaper.status !== 409 || blockedPaperBody.error !== "RISK_REJECTED") throw new Error("Risk no bloqueó feed degradado");
+    if (blockedPaper.status !== 403 || blockedPaperBody.error !== "HUMAN_CONFIRMATION_REQUIRED") throw new Error("Command API permitió mutación sin confirmación");
+
+    const riskSimulation = await securedFetch("/api/risk/evaluate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "open_position", symbol: "ETHUSDT", capital: 100, entry: 100, stop: 95, target: 110 }),
+    }).then(r => r.json());
+    if (riskSimulation.riskDecision?.decision !== "reject" || !riskSimulation.riskDecision.reasons.includes("UNTRUSTED_MARKET_DATA")) throw new Error("Risk no bloqueó feed degradado");
 
     const constitution = await fetch(`${base}/api/constitution`).then(r => r.json());
     if (!constitution.ok || constitution.constitution.contentHash !== constitution.registry.contentHash) throw new Error("Constitución activa inválida");

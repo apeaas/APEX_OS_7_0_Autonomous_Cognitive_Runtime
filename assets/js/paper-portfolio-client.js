@@ -79,10 +79,31 @@
 
   async function command(input) {
     if (!projection) await start();
+    const paperCommand = { ...input, expectedVersion: projection.version };
+    if (String(input.source || "").toUpperCase() !== "AUTONOMOUS_RUNTIME") {
+      const draftResponse = await fetch("/api/decision/drafts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ command: paperCommand }),
+      });
+      const draftBody = await draftResponse.json();
+      if (!draftResponse.ok || !draftBody.ok) throw new Error(draftBody.message || "No se pudo preparar la confirmación.");
+      const accepted = window.confirm(formatConfirmation(draftBody.draft));
+      if (!accepted) throw new Error("Comando PAPER cancelado por el operador.");
+      const confirmationResponse = await fetch(`/api/decision/drafts/${encodeURIComponent(draftBody.draft.id)}/confirm`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accepted: true }),
+      });
+      const confirmationBody = await confirmationResponse.json();
+      if (!confirmationResponse.ok || !confirmationBody.ok) throw new Error(confirmationBody.message || "No se pudo confirmar el draft.");
+      paperCommand.draftId = draftBody.draft.id;
+      paperCommand.confirmationId = confirmationBody.confirmation.id;
+    }
     const response = await fetch("/api/paper/commands", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...input, expectedVersion: projection.version }),
+      body: JSON.stringify(paperCommand),
     });
     const body = await response.json();
     if (!response.ok || !body.ok) {
@@ -91,6 +112,22 @@
     }
     publish(body.projection);
     return body;
+  }
+
+  function formatConfirmation(draft) {
+    const view = draft.interpretation || {};
+    const feed = draft.feedEvidence || {};
+    return [
+      "Confirmación constitucional PAPER",
+      `Acción: ${view.action || "desconocida"}`,
+      `Símbolo: ${view.symbol || "N/A"}`,
+      `Tamaño solicitado: ${view.requestedSize ?? "N/A"}`,
+      `Posición: ${view.positionId || "N/A"}`,
+      `Feed: ${feed.status || "unknown"} · trusted=${feed.trusted === true}`,
+      `Expira: ${draft.expiresAt}`,
+      draft.consequences?.summary || "Mutación PAPER auditada.",
+      "No existe efecto live.",
+    ].join("\n");
   }
 
   function subscribe(callback) {
