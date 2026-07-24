@@ -5,7 +5,7 @@ cd /d "%~dp0"
 
 echo.
 echo =====================================================
-echo   APEX OS 7.0 - AUTONOMOUS COGNITIVE RUNTIME
+echo   APEX 7.1 - CONSTITUTIONAL COGNITIVE VOICE RUNTIME
 echo   PAPER ONLY - EXTERNAL ACCOUNTS LOCKED
  echo =====================================================
 echo.
@@ -46,7 +46,7 @@ if errorlevel 1 (
   exit /b 1
 )
 
-start "APEX OS 7.0 Server" /D "%~dp0" cmd /k "title APEX OS 7.0 Server && node server.js"
+start "APEX 7.1 Server" /D "%~dp0" cmd /k "title APEX 7.1 Server && node server.js"
 ping -n 3 127.0.0.1 >nul
 start "" http://127.0.0.1:5500
 exit /b 0

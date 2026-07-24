@@ -42,7 +42,7 @@ mock.listen(mockPort, "127.0.0.1", () => {
       if (data.actions?.length !== 1 || data.actions[0].name !== "focus_asset" || data.actions[0].requiresConfirmation !== false) throw new Error("Tool call o política incorrecta");
       if (data.runtime?.mode !== "observe") throw new Error("Contexto runtime ausente");
       if (openAiCalls !== 2) throw new Error("Loop function calling incompleto");
-      console.log("APEX 7.0 AI function-calling test: OK");
+      console.log("APEX 7.1 AI function-calling test: OK");
       finish();
     } catch (error) { finish(error); }
   });

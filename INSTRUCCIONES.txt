@@ -1,262 +1,218 @@
-APEX OS 7.0 — AUTONOMOUS COGNITIVE RUNTIME
+APEX 7.1 — CONSTITUTIONAL COGNITIVE VOICE RUNTIME
 GUÍA DE INSTALACIÓN Y OPERACIÓN
 
 ============================================================
-1. QUÉ ES ESTA ENTREGA
+1. ALCANCE
 ============================================================
 
-APEX OS 7.0 es un paquete completo. Incluye:
-- Living Cockpit y Mission Control.
-- Market Intelligence e indicadores.
-- Thinking Engine, Case Engine, Fiscal e Historiador.
-- Governance, Constitución, Risk y límite autónomo del 5%.
-- Core Event Bus y memoria persistente.
-- IA online desde backend local.
-- Command Runtime global.
-- planificación, cola de acciones y autonomía PAPER gobernada.
-- push-to-talk del navegador y puente opcional de voz Realtime.
-- registry de integraciones y contrato para adapters futuros.
-- diagnóstico, backups, tests y documentación.
+APEX 7.1 es un runtime local para observación, investigación, simulación,
+explicación, conversación y decisión patrimonial PAPER.
 
-No contiene ejecución live ni conexiones a cuentas externas. Eso está bloqueado deliberadamente.
+Incluye:
+- sesión local criptográfica y guards uniformes;
+- lifecycle de acciones con claims ligados a sesión;
+- portfolio PAPER canónico en backend;
+- ledger append-only e idempotente;
+- Safety Kernel y Constitución Patrimonial versionada;
+- Unified Risk y Governance determinísticos;
+- Fondo Autónomo PAPER con aporte inicial fijo máximo de 5%;
+- ImprovementProposal y Decision Journal auditables;
+- consola Realtime Voice/WebRTC con fallback mock/texto.
 
-============================================================
-2. INSTALACIÓN LIMPIA
-============================================================
-
-A. Guardá APEX 6.2 como respaldo.
-B. Descomprimí el ZIP completo en una carpeta nueva.
-C. No mezcles archivos ni carpetas entre versiones.
-D. Instalá Node.js 18 o superior si todavía no lo tenés.
-E. Ejecutá start_apex.bat en Windows o ./start_apex.sh en macOS/Linux.
-F. Abrí siempre APEX en:
-   http://127.0.0.1:5500
-
-Usar el mismo navegador y perfil conserva el localStorage del cockpit de versiones anteriores.
+No incluye Quantum Surfer, brokers, exchanges autenticados, wallets, firmas,
+custodia, depósitos, retiros, transferencias ni dinero real.
 
 ============================================================
-3. CONFIGURACIÓN DE IA
+2. REQUISITOS E INICIO
 ============================================================
 
-En el primer inicio se crea .env desde .env.example.
+- Node.js mínimo: 18.0.0.
+- Validación realizada en Windows 10.0.19045 x64 y Node v24.18.0.
+- Windows: start_apex.bat
+- macOS/Linux: ./start_apex.sh
+- URL: http://127.0.0.1:5500
 
-Configuración mínima:
-OPENAI_API_KEY=tu_clave
+No abras index.html con doble clic: el backend es obligatorio para la sesión,
+el ledger, Risk, Governance y voz.
+
+En el primer arranque se crea .env desde .env.example. Sin OPENAI_API_KEY la
+aplicación carga y la voz usa el mock determinístico claramente identificado.
+
+============================================================
+3. CONFIGURACIÓN
+============================================================
+
+Variables principales:
+
+OPENAI_API_KEY=
 OPENAI_MODEL=gpt-5.1
 OPENAI_REALTIME_MODEL=gpt-realtime
 APEX_HOST=127.0.0.1
 APEX_PORT=5500
+APEX_AI_RATE_LIMIT=60
 
-La clave vive únicamente en el backend local. No debe ir en index.html, assets/js ni capturas.
+Límites de voz:
 
-Sin OPENAI_API_KEY:
-- APEX abre y conserva las funciones determinísticas locales.
-- No responde la IA online.
-- No se ejecutan ciclos cognitivos basados en modelo.
+APEX_VOICE_SESSION_TTL_MS=900000
+APEX_VOICE_CONNECT_TIMEOUT_MS=20000
+APEX_VOICE_MAX_RECONNECTS=3
+APEX_VOICE_MAX_TOOL_CALLS=40
+APEX_VOICE_MAX_RESPONSES=48
 
-============================================================
-4. MODOS DEL RUNTIME
-============================================================
-
-OBSERVE
-- Lee, explica, navega y consulta memoria.
-- No prepara ni ejecuta acciones autónomas.
-
-COPILOT
-- Crea casos, planes y tickets.
-- Las acciones sensibles requieren confirmación humana.
-
-PAPER AUTONOMOUS
-- Puede evaluar y encolar una única acción gobernada por ciclo.
-- Solo opera sobre el ledger PAPER local.
-- Risk y Governance validan cada acción.
-- Requiere la frase exacta: HABILITAR PAPER AUTO
-
-SUSPENDED
-- Detiene ciclos y acciones.
-- Se activa por kill switch, auditoría o decisión humana.
-
-Para reanudar después de una emergencia se exige:
-REANUDAR APEX
+Si se publica detrás de una interfaz distinta, configurá explícitamente
+APEX_ALLOWED_HOSTS y APEX_ALLOWED_ORIGINS. La clave OpenAI vive únicamente en
+backend y nunca debe copiarse a index.html, assets/js, logs o capturas.
 
 ============================================================
-5. LÍMITES CONSTITUCIONALES
+4. JERARQUÍA Y MODOS
 ============================================================
 
-Locks no modificables por IA:
-- PAPER ONLY.
-- Live trading bloqueado.
-- Cuentas externas bloqueadas.
-- Retiros y transferencias bloqueados.
-- Firma de wallets bloqueada.
-- Techo autónomo humano: 5%.
-- La IA no puede elevar ese techo.
-- Stop y target obligatorios.
-- Sin averaging down.
-- Spot long-only en el runtime autónomo actual.
-- Kill switch prioritario.
+Autoridad:
 
-Límites configurables dentro del techo:
-- frecuencia del ciclo;
-- porcentaje de autonomía;
-- tamaño máximo por posición;
-- riesgo por operación;
-- pérdida diaria máxima;
-- confianza mínima;
-- R/R mínimo;
-- posiciones concurrentes;
-- cooldown;
-- activos autorizados;
-- permisos de abrir, cerrar y modificar protección.
+Safety Kernel
+→ Constitución Patrimonial
+→ Governance
+→ Unified Risk
+→ confirmación humana cuando corresponda
+→ ledger PAPER
+
+Modos:
+- OBSERVE: lectura e investigación.
+- COPILOT: preparación de planes, casos y CommandDraft.
+- PAPER AUTONOMOUS: acciones PAPER con claim, Risk, Governance y Fondo activo.
+- SUSPENDED: kill switch o pausa; no admite nuevas mutaciones.
+
+Frases:
+- activar PAPER autónomo: HABILITAR PAPER AUTO
+- reanudar tras emergencia: REANUDAR APEX
+
+El kill switch tiene prioridad absoluta. Ningún modelo o comando de voz puede
+desactivarlo, elevar Risk, cambiar la Constitución o activar live.
 
 ============================================================
-6. COMMAND RUNTIME
+5. PORTFOLIO Y MIGRACIÓN
 ============================================================
 
-Abrí la paleta con Ctrl + K o usá el chat principal.
+El backend es la única autoridad de cash, equity, PnL y posiciones. El browser
+sólo proyecta y envía comandos.
 
-Ejemplos:
-- “Abrí Runtime y mostrame el presupuesto autónomo.”
-- “Analizá ETH y construí un caso.”
-- “Creá un plan intradía para BTC.”
-- “Prepará una operación PAPER con riesgo de 0,25%.”
-- “¿Por qué rechazaste la última operación?”
-- “Buscá objeciones relacionadas con SOL.”
-- “Ejecutá una autoauditoría.”
-- “Pausá Spot Hunter.”
-- “Exportá la memoria.”
-- “Activá el kill switch.”
+Al detectar `apex-portfolio` heredado en localStorage:
+1. APEX muestra el contenido a migrar.
+2. El operador confirma.
+3. El backend valida todo el portfolio y calcula un fingerprint.
+4. Se registra un único evento `legacy_portfolio_imported`.
+5. El browser conserva un backup `operational:false`.
+6. La clave operativa anterior se elimina y no vuelve a leerse como autoridad.
 
-Las acciones de capital PAPER se presentan como acciones pendientes en COPILOT. Deben confirmarse después de armar PAPER COMMAND.
-
-============================================================
-7. VOZ
-============================================================
-
-Push-to-talk:
-- usa SpeechRecognition del navegador cuando está disponible;
-- transcribe al chat y pasa la orden por el mismo Command Runtime;
-- la respuesta puede leerse con síntesis del navegador.
-
-Realtime Voice opcional:
-- requiere OPENAI_API_KEY, micrófono y un navegador compatible con WebRTC;
-- abre un canal de voz natural con el backend local;
-- los comandos operativos siguen pasando por permisos, Risk, Governance y confirmaciones.
-
-La disponibilidad de reconocimiento de voz del navegador depende del navegador y del sistema operativo.
+No edites archivos NDJSON mientras APEX está abierto. No borres eventos para
+corregir una operación: usá comandos compensatorios o restaurá un backup en un
+directorio separado.
 
 ============================================================
-8. PERSISTENCIA Y MEMORIA
+6. CONSOLA DE VOZ
 ============================================================
 
-Cliente:
-- localStorage en el origen 127.0.0.1:5500.
-- portfolio PAPER, watchlist, agentes, casos y memoria de interfaz.
+La consola persistente aparece en Mission Control y ofrece conectar,
+desconectar, mute, interrupción, transcript y entrada de texto en la misma
+sesión.
 
-Backend:
-- data/apex-runtime-state.json
-- data/apex-runtime-events.ndjson
-- data/apex-client-events.ndjson
+Con clave y acceso de cuenta:
+- el browser solicita micrófono;
+- WebRTC transporta audio;
+- el backend autentica la llamada Realtime;
+- la API key no llega al browser.
 
-No edites esos archivos mientras APEX está abierto.
+Sin clave, permiso, dispositivo o conectividad:
+- el fallback usa mock/texto;
+- el mock se rotula “MOCK · sin audio real”;
+- nunca se simula una conexión de voz real.
 
-Para respaldar:
-- ejecutá backup_apex.bat; o
-- ejecutá npm run backup.
+Una solicitud mutable por voz recorre:
 
-============================================================
-9. MIGRACIÓN DESDE 6.2
-============================================================
+transcript → CommandDraft → confirmación visual ligada a sesión
+→ API normal → Risk → Governance → efecto PAPER
 
-El estado del navegador se conserva automáticamente si mantenés:
-- el mismo navegador;
-- el mismo perfil;
-- http://127.0.0.1:5500
-
-Para importar la memoria backend de la carpeta 6.2:
-node tools/migrate-from-6-2.js "C:\ruta\a\APEX_OS_6_2_AI_Command_Runtime"
-
-La herramienta crea un respaldo previo de los datos 7.0 antes de copiar.
+“Interrumpir” cancela respuesta y limpia audio en curso. Audio crudo no se
+almacena por defecto.
 
 ============================================================
-10. INTEGRACIONES FUTURAS
+7. PERSISTENCIA Y BACKUP
 ============================================================
 
-La carpeta adapters contiene:
-- schema del manifiesto;
-- adapter nulo de seguridad;
-- contrato de capacidades;
-- instrucciones de implementación.
+Archivos principales en data/:
+- apex-paper-ledger.ndjson
+- apex-paper-snapshot.json
+- apex-runtime-state.json
+- apex-runtime-events.ndjson
+- apex-active-constitution.json
+- apex-improvement-audit.ndjson
+- apex-decision-journal.ndjson
+- apex-voice-audit.ndjson
 
-Registry actual:
-- Binance Public Market Data: lectura pública.
-- OpenAI Responses: inteligencia configurable.
-- OpenAI Realtime: voz beta opcional.
-- notificaciones de navegador: disponibles.
-- MetaTrader 5: diferido y bloqueado.
-- Interactive Brokers: diferido y bloqueado.
-- Phantom Wallet: diferido y bloqueado.
+Backup:
+- Windows: backup_apex.bat
+- Terminal: npm.cmd run backup
 
-Un adapter futuro nunca debe saltarse Governance Gateway ni Risk Gateway.
+El backup incluye data/, config/, .env y VERSION.txt. Guardalo fuera del
+directorio de trabajo antes de migrar o revertir código.
 
 ============================================================
-11. DIAGNÓSTICO Y TESTS
+8. DIAGNÓSTICO, TESTS Y MÉTRICAS
 ============================================================
 
 Windows:
 diagnostico_apex.bat
 
 Terminal:
-npm run doctor
-npm test
+npm.cmd run doctor
+npm.cmd test
+npm.cmd run qa:metrics
 
-La batería revisa:
-- sintaxis;
-- contrato del frontend;
-- servidor y endpoints;
-- flujo de tool calling simulado;
-- modos, queue, planes, límites y kill switch.
+La suite cubre seguridad negativa, ledger/replay, Constitución/Fondo, Risk,
+Governance, confirmaciones, mejora cognitiva, voz, frontend, gateway, smoke,
+AI simulado y autonomía fail-safe.
 
 ============================================================
-12. CIERRE Y REINICIO
+9. SOLUCIÓN DE PROBLEMAS
 ============================================================
 
-Para cerrar:
-- cerrá la ventana “APEX OS 7.0 Server”.
+Puerto ocupado:
+- cerrá otra instancia de APEX o cambiá APEX_PORT.
 
-Para reiniciar:
-- volvé a ejecutar start_apex.bat.
+IA online ausente:
+- revisá OPENAI_API_KEY;
+- reiniciá el backend;
+- consultá /api/health.
 
-No abras index.html con doble clic para usar IA o Runtime: el backend local es necesario.
+Micrófono denegado:
+- habilitá Micrófono desde el candado del navegador;
+- reconectá;
+- continuá por mock/texto si no querés conceder permiso.
 
-============================================================
-13. SOLUCIÓN DE PROBLEMAS
-============================================================
+Feed degradado:
+- investigación sigue permitida;
+- toda conclusión market-dependent queda operable=false;
+- no fuerces trusted desde UI, prompt o modelo.
 
-Puerto 5500 ocupado:
-- cerrá Live Server u otra instancia de APEX.
-
-IA sin conexión:
-- revisá OPENAI_API_KEY en .env;
-- cerrá y reiniciá APEX;
-- mirá /api/health desde el navegador.
-
-Runtime sin snapshot:
-- mantené Mission Control abierto unos segundos;
-- revisá que no haya errores en la consola del navegador;
-- ejecutá diagnóstico.
-
-Voz no disponible:
-- permití micrófono;
-- probá Chrome o Edge actualizados;
-- usá chat escrito como fallback.
-
-Memoria no aparece:
-- confirmá que abrís 127.0.0.1:5500 y no localhost;
-- revisá que estés usando el mismo perfil de navegador.
+Ledger no inicia:
+- no lo edites;
+- conservá el archivo y sus backups;
+- ejecutá npm.cmd test;
+- seguí docs/APEX_7_1_ROLLBACK.md.
 
 ============================================================
-14. ESTADO DE PRODUCTO
+10. DOCUMENTACIÓN Y ESTADO
 ============================================================
 
-APEX OS 7.0 es un runtime local avanzado para investigación, decisión y autonomía PAPER. No es todavía una infraestructura aprobada para custodiar o mover patrimonio real. La etapa live queda expresamente diferida hasta completar validación estadística, seguridad, adapters, reconciliación de órdenes y auditoría independiente.
+Índice: docs/APEX_7_1_ARCHITECTURE.md
+Seguridad: docs/APEX_7_1_SECURITY.md
+Ledger/migración: docs/APEX_7_1_LEDGER_AND_MIGRATION.md
+Constitución/Fondo: docs/APEX_7_1_CONSTITUTION_AND_FUND.md
+Risk/Governance: docs/APEX_7_1_RISK_AND_GOVERNANCE.md
+Mejora: docs/APEX_7_1_COGNITIVE_IMPROVEMENT.md
+Voz: docs/APEX_7_1_VOICE_CONSOLE.md
+QA: docs/APEX_7_1_QA_REPORT.md
+Rollback: docs/APEX_7_1_ROLLBACK.md
+
+APEX 7.1 no está aprobado para custodiar o mover patrimonio real. La siguiente
+versión prevista es APEX 7.2 Quantum Surfer; no forma parte de esta entrega.

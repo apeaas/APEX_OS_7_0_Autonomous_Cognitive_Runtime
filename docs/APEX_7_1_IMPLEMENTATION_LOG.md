@@ -601,3 +601,97 @@ respondió `Acceso denegado`; se usó exclusivamente el sitio oficial
 `PASS`. Consola constitucional persistente y modular, sin credenciales ni
 ejecución privilegiada en el browser; integración OpenAI real pendiente de una
 cuenta configurada para su verificación operacional.
+
+## Gate 7 — Integration, QA, Documentation and Rollback
+
+### Objetivo
+
+Integrar los gates sin regresiones, reducir wiring central, medir el runtime con
+datos reproducibles, completar la documentación operativa y definir rollback
+sin reescribir historia ni comprometer el ledger.
+
+### Implementación
+
+- Se extrajo composición, configuración Realtime y routing de voz desde
+  `server.js` a `lib/voice/runtime.js`. El archivo central se redujo 88 líneas
+  frente a Gate 6 y mantiene wiring/routing; la lógica crítica permanece modular.
+- Identidad de producto actualizada a APEX 7.1 en server, launchers, README,
+  guía, versión, UI y diagnóstico.
+- `assets/js/app.js` no fue modificado en Gate 7.
+- `tools/measure-apex-7-1.js` mide arranque, RSS, replay/proyección, query,
+  Risk, conexión mock y reconnect determinístico con caveats explícitos.
+- `tools/generate-manifest.js` regenera un manifiesto SHA-256 determinístico y
+  excluye `.env`, datos runtime, backups y el propio manifiesto.
+- Doctor comprueba módulos constitucionales, ledger, Safety, Risk y voz además
+  de locks existentes.
+- Node mínimo real fijado en 18.0.0 por las APIs `fetch`, `FormData`, `Blob` y
+  módulos `node:` usados. La ejecución de QA fue en v24.18.0; no se afirma una
+  matrix que no se ejecutó.
+- Guía de operación corregida: el portfolio ya no figura como estado operativo
+  de localStorage y se documentan migración, voice fallback, backups y gates.
+- No se implementó Quantum Surfer.
+
+### Documentación
+
+Creados:
+
+- `docs/APEX_7_1_ARCHITECTURE.md`
+- `docs/APEX_7_1_SECURITY.md`
+- `docs/APEX_7_1_LEDGER_AND_MIGRATION.md`
+- `docs/APEX_7_1_CONSTITUTION_AND_FUND.md`
+- `docs/APEX_7_1_RISK_AND_GOVERNANCE.md`
+- `docs/APEX_7_1_COGNITIVE_IMPROVEMENT.md`
+- `docs/APEX_7_1_VOICE_CONSOLE.md`
+- `docs/APEX_7_1_QA_REPORT.md`
+- `docs/APEX_7_1_ROLLBACK.md`
+
+Actualizados:
+
+- `README.md`, `INSTRUCCIONES.txt`, `LEEME.txt`, `VERSION.txt`,
+  `data/README.md`, `.env.example`, `MANIFEST_SHA256.txt`.
+
+### Pruebas y métricas
+
+- `npm.cmd run doctor`: PASS; warning esperado por `OPENAI_API_KEY` ausente.
+- `npm.cmd test`: 11/11 suites, exit 0, 36.715 ms.
+- 292 aserciones de dominio explícitas, 219 IDs frontend y cuatro suites de
+  integración/determinismo adicionales.
+- `npm.cmd run qa:metrics`: exit 0.
+- Arranque: 716,750 ms; RSS aproximado: 51,148 MiB.
+- Replay+proyección de 101 eventos: 14,575 ms.
+- Portfolio median/p95: 10,682/12,994 ms.
+- Risk API median/p95: 16,182/18,990 ms.
+- Conexión mock median/p95: 18,764/23,541 ms.
+- Reconnect determinístico backend: 0,058 ms.
+
+Las métricas son locales. No representan una llamada OpenAI, red, costo ni
+WebRTC real.
+
+### Líneas centrales
+
+Base `805d639` → Gate 7:
+
+- `server.js`: 791 → 1.282 líneas; diff `+621/-130`, net +491.
+- `assets/js/app.js`: 1.412 → 1.437; diff `+108/-83`, net +25.
+
+El crecimiento proviene de integración de todos los gates, pero cada dominio
+nuevo tiene contrato, consumidor y pruebas fuera del archivo central. Extraer
+controllers HTTP restantes queda como deuda y no justifica una reescritura
+riesgosa en esta entrega.
+
+### Riesgos y deuda
+
+- GitHub remoto no pudo refrescarse por `Empty reply from server`; la base local
+  verificada sigue siendo exacta.
+- Falta validar OpenAI Realtime real con clave/cuenta, incluyendo audio,
+  latencia, consumo y reconexión de red.
+- Falta ejecutar una matrix CI real en Node 18 y LTS actual.
+- `APEX_DATA_DIR` continúa siendo single-process.
+- Los porcentajes de drawdown/consolidación no se inventaron y requieren una
+  futura Constitución aprobada.
+
+### Resultado
+
+`PASS`. Gates 0–7 integrados, documentación y rollback completos, suite final y
+métricas en verde. La limitación OpenAI real queda declarada sin presentar el
+mock como voz real.

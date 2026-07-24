@@ -1,4 +1,4 @@
-APEX OS 7.0 — AUTONOMOUS COGNITIVE RUNTIME
+APEX 7.1 — CONSTITUTIONAL COGNITIVE VOICE RUNTIME
 
 Este paquete es una instalación completa e independiente. No reemplaces carpetas internas de versiones anteriores.
 
@@ -28,3 +28,10 @@ UTILIDADES
 - npm test: ejecuta la batería técnica completa.
 
 Leé INSTRUCCIONES.txt para instalación, modos, comandos, migración y solución de problemas.
+
+NOVEDADES 7.1
+- Backend como única contabilidad PAPER mediante ledger append-only.
+- Safety Kernel, Constitución Patrimonial, Unified Risk y Governance.
+- ImprovementProposal/Decision Journal auditables.
+- Consola de voz WebRTC con mock/texto sin clave y sin autoridad paralela.
+- Quantum Surfer queda fuera de esta versión.

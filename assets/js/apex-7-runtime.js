@@ -83,7 +83,7 @@
     section.innerHTML = `
       <div class="runtime-mode-banner" id="runtimeEmergencyBanner">KILL SWITCH ACTIVO · APEX está suspendido y ninguna acción autónoma puede ejecutarse.</div>
       <div class="runtime-foundation-head">
-        <div><p class="eyebrow">APEX OS 7.0 · MASTER RUNTIME</p><h3>Autonomous Cognitive Runtime</h3><p>La IA dejó de ser un chat agregado: observa el cockpit, conserva planes, propone decisiones y puede operar autónomamente en PAPER bajo Risk, Governance, presupuesto y kill switch.</p></div>
+        <div><p class="eyebrow">APEX 7.1 · CONSTITUTIONAL RUNTIME</p><h3>Constitutional Cognitive Voice Runtime</h3><p>APEX observa, razona, conversa y propone bajo Safety, Constitución, Governance, Unified Risk, confirmación y ledger PAPER.</p></div>
         <div class="runtime-head-actions"><button id="runtimeRunCycle" class="primary">Ejecutar ciclo</button><button id="runtimeSettingsFocus">Configuración</button><button id="runtimeExport">Exportar runtime</button><button id="runtimeHeadKill" class="danger">KILL SWITCH</button></div>
       </div>
       <div class="runtime-kpis">

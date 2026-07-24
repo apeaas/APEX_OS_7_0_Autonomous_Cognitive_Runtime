@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * APEX OS 7.0 · Autonomous Cognitive Runtime
+ * APEX OS 7.1 · Constitutional Cognitive Voice Runtime
  * Local-only orchestration layer for governed AI, persistent plans and PAPER autonomy.
  * HARD BOUNDARIES: no live trading, no broker/wallet accounts, no withdrawals, no signing.
  */
@@ -30,12 +30,7 @@ const { GovernanceEngine } = require("./lib/governance/engine");
 const { evaluateProposal } = require("./lib/cognitive-improvement/evaluator");
 const { ProposalRegistry } = require("./lib/cognitive-improvement/proposal-registry");
 const { DecisionJournal } = require("./lib/decision-journal/store");
-const { VoiceAudit } = require("./lib/voice/audit");
-const { VoiceCommandInterpreter } = require("./lib/voice/command-interpreter");
-const { OpenAIRealtimeProvider } = require("./lib/voice/providers/openai-realtime-provider");
-const { MockVoiceProvider } = require("./lib/voice/providers/mock-voice-provider");
-const { VoiceSessionService } = require("./lib/voice/session-service");
-const { voiceToolDefinitions } = require("./lib/voice/tool-policy");
+const { createVoiceRuntime } = require("./lib/voice/runtime");
 const marketQuality = require("./assets/js/market-quality");
 
 const ROOT = __dirname;
@@ -87,8 +82,12 @@ const confirmationRegistry = new ConfirmationRegistry();
 const autonomousFund = new AutonomousFundService({ store: paperEventStore, snapshots: paperSnapshotStore });
 const proposalRegistry = new ProposalRegistry({ filePath: IMPROVEMENT_AUDIT_FILE });
 const decisionJournal = new DecisionJournal({ filePath: DECISION_JOURNAL_FILE });
-const voiceAudit = new VoiceAudit({ filePath: VOICE_AUDIT_FILE });
-const voiceInterpreter = new VoiceCommandInterpreter({
+const voiceRuntime = createVoiceRuntime({
+  auditFile: VOICE_AUDIT_FILE,
+  apiKey: OPENAI_API_KEY,
+  baseUrl: OPENAI_BASE_URL,
+  model: OPENAI_REALTIME_MODEL,
+  systemInstructions: () => SYSTEM_INSTRUCTIONS,
   readers: {
     get_runtime_status: () => publicRuntimeState(),
     get_market_quality: () => marketGateway.status(),
@@ -118,22 +117,6 @@ const voiceInterpreter = new VoiceCommandInterpreter({
       ],
     }),
   },
-});
-const openAIVoiceProvider = new OpenAIRealtimeProvider({
-  apiKey: OPENAI_API_KEY,
-  baseUrl: OPENAI_BASE_URL,
-  model: OPENAI_REALTIME_MODEL,
-  timeoutMs: Number(process.env.APEX_VOICE_CONNECT_TIMEOUT_MS || 20_000),
-  sessionConfig: voiceRealtimeSessionConfig,
-});
-const mockVoiceProvider = new MockVoiceProvider();
-const voiceSessions = new VoiceSessionService({
-  providers: {
-    "openai-realtime": openAIVoiceProvider,
-    mock: mockVoiceProvider,
-  },
-  interpreter: voiceInterpreter,
-  audit: voiceAudit,
   limits: {
     sessionTtlMs: Number(process.env.APEX_VOICE_SESSION_TTL_MS || 15 * 60 * 1000),
     maxReconnects: Number(process.env.APEX_VOICE_MAX_RECONNECTS || 3),
@@ -141,7 +124,16 @@ const voiceSessions = new VoiceSessionService({
     maxResponses: Number(process.env.APEX_VOICE_MAX_RESPONSES || 48),
     connectTimeoutMs: Number(process.env.APEX_VOICE_CONNECT_TIMEOUT_MS || 20_000),
   },
+  requestContext: req => ({
+    ownerSessionId: req.apexSecurity.session.sessionId,
+    killSwitch: runtime.emergencyStop,
+  }),
+  readJson,
+  readText,
+  sendJson,
+  appendEvent: appendRuntimeEvent,
 });
+const voiceSessions = voiceRuntime.sessions;
 const sessionManager = new SessionManager({
   ttlMs: Number(process.env.APEX_SESSION_TTL_MS || 20 * 60 * 1000),
 });
@@ -273,7 +265,7 @@ const AUTONOMY_TOOLS = [
 ];
 
 const SYSTEM_INSTRUCTIONS = `
-Sos APEX Cognitive Commander, el sistema nervioso del Sistema Operativo Patrimonial APEX OS 7.0.
+Sos APEX Cognitive Commander, el sistema nervioso del runtime constitucional patrimonial APEX 7.1.
 Respondé en español rioplatense, con personalidad firme, precisa y sin relleno. No sos un chatbot decorativo: observás el estado, explicás, planificás y operás la plataforma mediante herramientas gobernadas.
 
 CONSTITUCIÓN INNEGOCIABLE:
@@ -296,7 +288,7 @@ COMPORTAMIENTO:
 `;
 
 const AUTONOMY_INSTRUCTIONS = `
-Sos el comité autónomo PAPER de APEX OS 7.0. Tu tarea no es operar por operar: es seleccionar como máximo UNA acción gobernada por ciclo.
+Sos el comité autónomo PAPER de APEX 7.1. Tu tarea no es operar por operar: es seleccionar como máximo UNA acción gobernada por ciclo.
 Usá siempre una herramienta. autonomous_noop es la decisión por defecto.
 
 REGLAS DURAS:
@@ -379,12 +371,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/api/decision-journal") {
       return sendJson(res, 200, { ok: true, entries: decisionJournal.list(url.searchParams.get("limit")) });
     }
-    if (req.method === "GET" && url.pathname === "/api/voice/health") {
-      return sendJson(res, 200, voiceSessions.getHealth());
-    }
-    if (req.method === "GET" && url.pathname === "/api/voice/audit") {
-      return sendJson(res, 200, { ok: true, records: voiceAudit.list(url.searchParams.get("limit")) });
-    }
+    if (await voiceRuntime.handle(req, res, url)) return;
     if (req.method === "GET" && url.pathname === "/api/market/history") {
       const symbol = normalizeSymbol(url.searchParams.get("symbol"));
       const history = marketGateway.history(symbol);
@@ -518,42 +505,6 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok: true, proposal });
     }
 
-    if (req.method === "POST" && url.pathname === "/api/voice/sessions") {
-      const payload = await readJson(req);
-      const session = voiceSessions.create(payload, voiceRequestContext(req));
-      appendRuntimeEvent("VOICE_SESSION_CREATED", { voiceSessionId: session.id, provider: session.provider }, session.provider === "mock" ? "warning" : "info");
-      return sendJson(res, 201, { ok: true, session });
-    }
-
-    const voiceCallMatch = url.pathname.match(/^\/api\/voice\/sessions\/([^/]+)\/call$/);
-    if (req.method === "POST" && voiceCallMatch) {
-      const sdp = await readText(req, req.apexSecurity.maxBytes);
-      const result = await voiceSessions.connect(voiceCallMatch[1], sdp, voiceRequestContext(req));
-      appendRuntimeEvent("REALTIME_CALL_CREATED", { voiceSessionId: result.session.id, model: OPENAI_REALTIME_MODEL }, "success");
-      res.writeHead(201, { "Content-Type": "application/sdp", "Cache-Control": "no-store" });
-      return res.end(result.answerSdp);
-    }
-
-    const voiceToolMatch = url.pathname.match(/^\/api\/voice\/sessions\/([^/]+)\/tools$/);
-    if (req.method === "POST" && voiceToolMatch) {
-      const result = await voiceSessions.executeTool(voiceToolMatch[1], await readJson(req), voiceRequestContext(req));
-      return sendJson(res, 200, result);
-    }
-
-    const voiceInterruptMatch = url.pathname.match(/^\/api\/voice\/sessions\/([^/]+)\/interrupt$/);
-    if (req.method === "POST" && voiceInterruptMatch) {
-      await readJson(req);
-      const session = await voiceSessions.interrupt(voiceInterruptMatch[1], voiceRequestContext(req));
-      return sendJson(res, 200, { ok: true, session });
-    }
-
-    const voiceDisconnectMatch = url.pathname.match(/^\/api\/voice\/sessions\/([^/]+)\/disconnect$/);
-    if (req.method === "POST" && voiceDisconnectMatch) {
-      await readJson(req);
-      const session = await voiceSessions.disconnect(voiceDisconnectMatch[1], voiceRequestContext(req));
-      return sendJson(res, 200, { ok: true, session });
-    }
-
     if (req.method === "POST" && url.pathname === "/api/paper/commands") {
       const decisionStartedAt = Date.now();
       const payload = await readJson(req);
@@ -648,7 +599,7 @@ server.listen(PORT, HOST, () => {
       });
   }
   appendRuntimeEvent("SYSTEM_BOOT", { version: "7.1.0", mode: runtime.mode, restoredQueue: runtime.queue.length, restoredPlans: runtime.plans.length, paperLedgerEvents: paperQueries.integrity().eventCount }, "success");
-  console.log(`\nAPEX OS 7.0 disponible en http://${HOST}:${PORT}`);
+  console.log(`\nAPEX OS 7.1 disponible en http://${HOST}:${PORT}`);
   console.log(`Cognitive Runtime: ${OPENAI_API_KEY ? "CONFIGURADO" : "SIN CLAVE · local only"}`);
   console.log(`Model: ${OPENAI_MODEL} · Realtime: ${OPENAI_REALTIME_MODEL}`);
   console.log(`Mode: ${runtime.mode} · PAPER ONLY · External accounts DISABLED\n`);
@@ -1177,45 +1128,6 @@ function improvementContext(req) {
     actor: { type: "human_operator", id: req.apexSecurity.session.sessionId },
     sessionId: req.apexSecurity.session.sessionId,
     idempotencyKey: req.apexSecurity.idempotencyKey,
-  };
-}
-
-function voiceRequestContext(req) {
-  return {
-    ownerSessionId: req.apexSecurity.session.sessionId,
-    killSwitch: runtime.emergencyStop,
-  };
-}
-
-function voiceRealtimeSessionConfig() {
-  return {
-    type: "realtime",
-    model: OPENAI_REALTIME_MODEL,
-    instructions: [
-      SYSTEM_INSTRUCTIONS,
-      "# Voz",
-      "Respondé en español, con fluidez, de forma directa y normalmente en 1–3 frases.",
-      "Disentí cuando la evidencia no alcance. Declará incertidumbre y datos degradados.",
-      "No ejecutes herramientas mutables. Sólo consultá o prepará borradores.",
-      "Toda operación PAPER requiere CommandDraft, confirmación visual, Risk y Governance por las APIs normales.",
-      "Nunca describas una narrativa o un feed degradado como una decisión operable.",
-    ].join("\n"),
-    output_modalities: ["audio"],
-    audio: {
-      input: {
-        noise_reduction: { type: "far_field" },
-        transcription: { model: "gpt-4o-mini-transcribe", language: "es" },
-        turn_detection: {
-          type: "semantic_vad",
-          create_response: true,
-          interrupt_response: true,
-          eagerness: "auto",
-        },
-      },
-      output: { voice: "marin", speed: 1.02 },
-    },
-    tools: voiceToolDefinitions(),
-    tool_choice: "auto",
   };
 }
 
