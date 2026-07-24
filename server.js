@@ -11,6 +11,11 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { MarketDataGateway } = require("./lib/market-data/gateway");
+const { ActionClaims } = require("./lib/runtime-security/action-claims");
+const { parseJsonBody, validatePayload } = require("./lib/runtime-security/contracts");
+const { MutableRequestGuard } = require("./lib/runtime-security/mutable-request-guard");
+const { SlidingWindowRateLimiter } = require("./lib/runtime-security/rate-limiter");
+const { SessionManager } = require("./lib/runtime-security/session-manager");
 const marketQuality = require("./assets/js/market-quality");
 
 const ROOT = __dirname;
@@ -22,8 +27,6 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.1";
 const OPENAI_REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || "gpt-realtime";
 const OPENAI_BASE_URL = (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "");
-const MAX_BODY_BYTES = 2_000_000;
-const WINDOW_MS = 5 * 60 * 1000;
 const MAX_REQUESTS_PER_WINDOW = Number(process.env.APEX_AI_RATE_LIMIT || 60);
 const DATA_DIR = process.env.APEX_DATA_DIR ? path.resolve(process.env.APEX_DATA_DIR) : path.join(ROOT, "data");
 const STATE_FILE = path.join(DATA_DIR, "apex-runtime-state.json");
@@ -33,7 +36,6 @@ const MARKET_CACHE_FILE = path.join(DATA_DIR, "apex-market-cache.json");
 const AUTONOMY_SPEC = readJsonFile(path.join(ROOT, "config", "apex_autonomy.json"), {});
 const INTEGRATION_SPEC = readJsonFile(path.join(ROOT, "config", "apex_integrations.json"), {});
 const HUMAN_AUTONOMY_CEILING_PCT = 5;
-const rateBuckets = new Map();
 let cycleInFlight = false;
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -42,6 +44,27 @@ const marketGateway = new MarketDataGateway({
   dataDir: DATA_DIR,
   cacheFile: MARKET_CACHE_FILE,
   eventSink: (eventType, payload, severity) => appendRuntimeEvent(eventType, payload, severity),
+});
+const sessionManager = new SessionManager({
+  ttlMs: Number(process.env.APEX_SESSION_TTL_MS || 20 * 60 * 1000),
+});
+const requestRateLimiter = new SlidingWindowRateLimiter({
+  windowMs: 5 * 60 * 1000,
+  maxRequests: MAX_REQUESTS_PER_WINDOW,
+});
+const actionClaims = new ActionClaims({
+  claimTtlMs: Number(process.env.APEX_CLAIM_TTL_MS || 60_000),
+});
+const configuredHosts = String(process.env.APEX_ALLOWED_HOSTS || "").split(",").map(value => value.trim()).filter(Boolean);
+const configuredOrigins = String(process.env.APEX_ALLOWED_ORIGINS || "").split(",").map(value => value.trim()).filter(Boolean);
+const defaultHosts = [`${HOST}:${PORT}`, `127.0.0.1:${PORT}`, `localhost:${PORT}`, `[::1]:${PORT}`];
+const defaultOrigins = defaultHosts.flatMap(host => [`http://${host}`, `https://${host}`]);
+const mutableRequestGuard = new MutableRequestGuard({
+  sessions: sessionManager,
+  rateLimiter: requestRateLimiter,
+  allowedHosts: [...defaultHosts, ...configuredHosts],
+  allowedOrigins: [...defaultOrigins, ...configuredOrigins],
+  isKillSwitchActive: () => runtime.emergencyStop,
 });
 
 const MIME = {
@@ -192,7 +215,20 @@ REGLAS DURAS:
 const server = http.createServer(async (req, res) => {
   try {
     setSecurityHeaders(res);
-    const url = new URL(req.url, `http://${req.headers.host || `${HOST}:${PORT}`}`);
+    const url = new URL(req.url, `http://${HOST}:${PORT}`);
+
+    if (req.method === "GET" && url.pathname === "/api/session/bootstrap") {
+      const bootstrap = mutableRequestGuard.bootstrap(req);
+      if (!bootstrap.ok) return sendJson(res, bootstrap.statusCode, { error: bootstrap.code, message: bootstrap.message });
+      return sendJson(res, 200, bootstrap.credentials);
+    }
+
+    const authorization = mutableRequestGuard.authorize(req, url.pathname);
+    if (!authorization.ok) {
+      if (authorization.retryAfterMs) res.setHeader("Retry-After", String(Math.ceil(authorization.retryAfterMs / 1000)));
+      return sendJson(res, authorization.statusCode, { error: authorization.code, message: authorization.message });
+    }
+    req.apexSecurity = authorization;
 
     if (req.method === "GET" && url.pathname === "/api/health") return sendJson(res, 200, healthPayload());
     if (req.method === "GET" && url.pathname === "/api/runtime/state") return sendJson(res, 200, publicRuntimeState());
@@ -206,11 +242,6 @@ const server = http.createServer(async (req, res) => {
       const symbol = normalizeSymbol(url.searchParams.get("symbol"));
       const history = marketGateway.history(symbol);
       return history ? sendJson(res, 200, history) : sendJson(res, 400, { error: "Símbolo no soportado." });
-    }
-
-    if (req.method === "POST" && url.pathname.startsWith("/api/")) {
-      if (!isTrustedLocalRequest(req)) return sendJson(res, 403, { error: "Origen no autorizado." });
-      if (!allowRate(req)) return sendJson(res, 429, { error: "Demasiadas solicitudes. Esperá unos segundos." });
     }
 
     if (req.method === "POST" && url.pathname === "/api/assistant") {
@@ -264,7 +295,7 @@ const server = http.createServer(async (req, res) => {
     const actionMatch = url.pathname.match(/^\/api\/runtime\/actions\/([^/]+)\/(claim|result|cancel)$/);
     if (req.method === "POST" && actionMatch) {
       const payload = await readJson(req);
-      const result = mutateQueuedAction(actionMatch[1], actionMatch[2], payload || {});
+      const result = mutateQueuedActionSecure(actionMatch[1], actionMatch[2], payload || {}, req.apexSecurity.session);
       return sendJson(res, result.ok ? 200 : 400, result);
     }
 
@@ -287,7 +318,7 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/api/realtime/call") {
       if (!OPENAI_API_KEY) return sendJson(res, 503, { error: "AI_RUNTIME_NOT_CONFIGURED" });
-      const sdp = await readText(req, MAX_BODY_BYTES);
+      const sdp = await readText(req, req.apexSecurity.maxBytes);
       if (!sdp.includes("v=0")) return sendJson(res, 400, { error: "SDP inválido" });
       const answer = await createRealtimeCall(sdp);
       res.writeHead(201, { "Content-Type": "application/sdp", "Cache-Control": "no-store" });
@@ -530,36 +561,72 @@ function scheduleNoop(reason) {
   return { ok: true, noop: true, message: reason };
 }
 
-function mutateQueuedAction(id, operation, payload) {
+function mutateQueuedActionSecure(id, operation, payload, session) {
   const action = runtime.queue.find(item => item.id === id);
-  if (!action) return { ok: false, message: "Acción no encontrada." };
+  if (!action) return { ok: false, code: "ACTION_NOT_FOUND", message: "Acción no encontrada." };
+
   if (operation === "claim") {
-    if (action.status !== "queued") return { ok: false, message: `Acción en estado ${action.status}.` };
-    if (Date.parse(action.expiresAt) < Date.now()) { action.status = "expired"; saveRuntime(); return { ok: false, message: "Acción expirada." }; }
-    action.status = "claimed"; action.claimedAt = new Date().toISOString(); action.claimedBy = payload?.clientId || "browser";
-    saveRuntime(); appendRuntimeEvent("AUTONOMOUS_ACTION_CLAIMED", { actionId: id, name: action.name }, "info");
-    return { ok: true, action };
+    const result = actionClaims.claim(action, {
+      sessionId: session.sessionId,
+      claimant: payload?.claimant || payload?.clientId || "browser",
+      killSwitch: runtime.emergencyStop,
+    });
+    if (!result.ok) return result;
+    saveRuntime();
+    appendRuntimeEvent("AUTONOMOUS_ACTION_CLAIMED", {
+      actionId: id,
+      claimId: result.claim.claimId,
+      name: action.name,
+      sessionId: session.sessionId,
+    }, "info");
+    return result;
   }
+
   if (operation === "cancel") {
-    if (["executed", "failed", "cancelled"].includes(action.status)) return { ok: false, message: "Acción ya finalizada." };
-    action.status = "cancelled"; action.cancelledAt = new Date().toISOString(); action.cancelReason = payload?.reason || "Cancelada";
-    saveRuntime(); appendRuntimeEvent("AUTONOMOUS_ACTION_CANCELLED", { actionId: id, reason: action.cancelReason }, "warning");
-    return { ok: true, action };
+    const result = actionClaims.cancel(action, payload?.reason, { sessionId: session.sessionId });
+    if (!result.ok) return result;
+    saveRuntime();
+    appendRuntimeEvent("AUTONOMOUS_ACTION_CANCELLED", {
+      actionId: id,
+      reason: action.cancelReason,
+      sessionId: session.sessionId,
+    }, "warning");
+    return result;
   }
+
   if (operation === "result") {
-    if (![
-      "claimed", "queued"
-    ].includes(action.status)) return { ok: false, message: `No se puede reportar resultado en estado ${action.status}.` };
-    action.status = payload?.ok === false ? "failed" : "executed";
-    action.completedAt = new Date().toISOString(); action.result = sanitizeSnapshot(payload || {});
-    runtime.history.unshift({ id: action.id, name: action.name, summary: action.summary, status: action.status, createdAt: action.createdAt, completedAt: action.completedAt, result: action.result });
-    runtime.stats.executedActions += action.status === "executed" ? 1 : 0;
+    const result = actionClaims.complete(action, {
+      claimId: payload.claimId,
+      nonce: payload.nonce,
+      ok: payload.ok,
+      result: sanitizeSnapshot(payload.result ?? payload),
+    }, {
+      sessionId: session.sessionId,
+      killSwitch: runtime.emergencyStop,
+    });
+    if (!result.ok) return result;
+    runtime.history.unshift({
+      id: action.id,
+      name: action.name,
+      summary: action.summary,
+      status: action.status,
+      createdAt: action.createdAt,
+      completedAt: action.completedAt,
+      result: action.result,
+    });
+    runtime.stats.executedActions += action.status === "completed" ? 1 : 0;
     runtime.stats.failedActions += action.status === "failed" ? 1 : 0;
-    trimRuntimeCollections(); saveRuntime();
-    appendRuntimeEvent(action.status === "executed" ? "AUTONOMOUS_ACTION_EXECUTED" : "AUTONOMOUS_ACTION_FAILED", { actionId: id, name: action.name, result: action.result }, action.status === "executed" ? "success" : "error");
-    return { ok: true, action };
+    trimRuntimeCollections();
+    saveRuntime();
+    appendRuntimeEvent(
+      action.status === "completed" ? "AUTONOMOUS_ACTION_COMPLETED" : "AUTONOMOUS_ACTION_FAILED",
+      { actionId: id, claimId: payload.claimId, name: action.name, result: action.result },
+      action.status === "completed" ? "success" : "error",
+    );
+    return result;
   }
-  return { ok: false, message: "Operación inválida." };
+
+  return { ok: false, code: "INVALID_OPERATION", message: "Operación inválida." };
 }
 
 function changeMode(mode, options = {}) {
@@ -600,7 +667,9 @@ function updateRuntimeConfig(input) {
 
 function activateEmergencyStop(reason) {
   runtime.emergencyStop = true; runtime.mode = "suspended"; runtime.cycleStatus = "emergency"; runtime.nextCycleAt = null;
-  runtime.queue.forEach(action => { if (["queued", "claimed"].includes(action.status)) { action.status = "cancelled"; action.cancelReason = "Kill switch"; action.cancelledAt = new Date().toISOString(); } });
+  runtime.queue.forEach(action => {
+    if (["queued", "claimed"].includes(action.status)) actionClaims.cancel(action, "Kill switch", { system: true });
+  });
   saveRuntime(); appendRuntimeEvent("EMERGENCY_STOP_ACTIVATED", { reason }, "error");
   return { ok: true, message: "KILL SWITCH ACTIVO. Ciclos suspendidos y cola cancelada." };
 }
@@ -770,11 +839,17 @@ function serveStatic(pathname, req, res) {
   fs.stat(filePath, (err, stat) => { if (err || !stat.isFile()) return sendJson(res, 404, { error: "No encontrado" }); const type = MIME[path.extname(filePath).toLowerCase()] || "application/octet-stream"; res.writeHead(200, { "Content-Type": type, "Cache-Control": "no-store" }); if (req.method === "HEAD") return res.end(); fs.createReadStream(filePath).pipe(res); });
 }
 
-function readJson(req) { return readText(req, MAX_BODY_BYTES).then(text => { try { return JSON.parse(text || "{}"); } catch { throw badRequest("JSON inválido."); } }); }
-function readText(req, maxBytes = MAX_BODY_BYTES) { return new Promise((resolve, reject) => { let size = 0; const chunks = []; req.on("data", chunk => { size += chunk.length; if (size > maxBytes) { reject(Object.assign(new Error("Solicitud demasiado grande."), { statusCode: 413 })); req.destroy(); return; } chunks.push(chunk); }); req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8"))); req.on("error", reject); }); }
-function allowRate(req) { const key = req.socket.remoteAddress || "local"; const now = Date.now(); const bucket = rateBuckets.get(key) || []; const active = bucket.filter(timestamp => now - timestamp < WINDOW_MS); if (active.length >= MAX_REQUESTS_PER_WINDOW) return false; active.push(now); rateBuckets.set(key, active); return true; }
+function readJson(req) {
+  return readText(req, req.apexSecurity?.maxBytes).then(text => {
+    const payload = parseJsonBody(text);
+    const pathname = new URL(req.url, `http://${HOST}:${PORT}`).pathname;
+    const validation = validatePayload(req.method, pathname, payload);
+    if (!validation.ok) throw badRequest(validation.message);
+    return payload;
+  });
+}
+function readText(req, maxBytes = 2_000_000) { return new Promise((resolve, reject) => { let size = 0; const chunks = []; req.on("data", chunk => { size += chunk.length; if (size > maxBytes) { reject(Object.assign(new Error("Solicitud demasiado grande."), { statusCode: 413 })); req.destroy(); return; } chunks.push(chunk); }); req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8"))); req.on("error", reject); }); }
 function setSecurityHeaders(res) { res.setHeader("X-Content-Type-Options", "nosniff"); res.setHeader("X-Frame-Options", "DENY"); res.setHeader("Referrer-Policy", "no-referrer"); res.setHeader("Cross-Origin-Resource-Policy", "same-origin"); res.setHeader("Permissions-Policy", "geolocation=(), camera=(), payment=()"); }
-function isTrustedLocalRequest(req) { const origin = req.headers.origin; if (!origin) return true; try { const parsed = new URL(origin); return ["127.0.0.1", "localhost"].includes(parsed.hostname) && Number(parsed.port || 80) === PORT; } catch { return false; } }
 function sendJson(res, status, payload) { const body = JSON.stringify(payload); res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" }); res.end(body); }
 
 function sanitizeSnapshot(input) { const json = JSON.stringify(input, (_key, value) => { if (typeof value === "string") return value.slice(0, 3000); if (Array.isArray(value)) return value.slice(0, 100); return value; }); return safeJson(json, {}); }

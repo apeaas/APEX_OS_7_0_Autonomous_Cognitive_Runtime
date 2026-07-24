@@ -4,6 +4,7 @@ const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
+const { createSecuredFetch } = require("./tests/helpers/secured-fetch");
 const mockPort = 8810;
 const apexPort = 8809;
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "apex7-ai-"));
@@ -33,7 +34,8 @@ mock.listen(mockPort, "127.0.0.1", () => {
   apex.stdout.on("data", async chunk => {
     if (!String(chunk).includes("disponible")) return;
     try {
-      const response = await fetch(`http://127.0.0.1:${apexPort}/api/assistant`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: "Poné BTC en foco", state: { version: "7.0.0", executionMode: "PAPER_ONLY", focusSymbol: "ETHUSDT" }, history: [] }) });
+      const securedFetch = createSecuredFetch(`http://127.0.0.1:${apexPort}`);
+      const response = await securedFetch("/api/assistant", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: "Poné BTC en foco", state: { version: "7.0.0", executionMode: "PAPER_ONLY", focusSymbol: "ETHUSDT" }, history: [] }) });
       const data = await response.json();
       if (!response.ok) throw new Error(JSON.stringify(data));
       if (data.text !== "Puse a BTC en foco para revisar su estructura.") throw new Error("Texto final incorrecto");

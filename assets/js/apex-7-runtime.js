@@ -219,15 +219,24 @@
     if (!queued) return;
     actionWorkerBusy = true;
     try {
-      const claimResponse = await fetch(`/api/runtime/actions/${encodeURIComponent(queued.id)}/claim`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientId }) });
+      const claimResponse = await fetch(`/api/runtime/actions/${encodeURIComponent(queued.id)}/claim`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientId, claimant: "runtime-browser" }) });
       const claim = await claimResponse.json();
       if (!claimResponse.ok || !claim.ok) return;
       const result = await executeAutonomousAction(claim.action);
-      await fetch(`/api/runtime/actions/${encodeURIComponent(queued.id)}/result`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(result) });
+      await fetch(`/api/runtime/actions/${encodeURIComponent(queued.id)}/result`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          claimId: claim.claim.claimId,
+          nonce: claim.claim.nonce,
+          ok: result.ok !== false,
+          result,
+        }),
+      });
       if (result.ok) notify("APEX PAPER AUTO", result.message || queued.summary);
       emit(result.ok ? "AUTONOMOUS_CLIENT_EXECUTION_SUCCEEDED" : "AUTONOMOUS_CLIENT_EXECUTION_FAILED", { action: queued, result }, { source: "COGNITIVE_RUNTIME", category: "execution", severity: result.ok ? "success" : "error", symbol: queued.arguments?.symbol, correlationId: queued.id });
     } catch (error) {
-      try { await fetch(`/api/runtime/actions/${encodeURIComponent(queued.id)}/result`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ok: false, message: error.message }) }); } catch {}
+      emit("AUTONOMOUS_CLIENT_EXECUTION_FAILED", { action: queued, message: error.message }, { source: "COGNITIVE_RUNTIME", category: "execution", severity: "error", correlationId: queued.id });
     } finally {
       actionWorkerBusy = false;
       await pollRuntime();

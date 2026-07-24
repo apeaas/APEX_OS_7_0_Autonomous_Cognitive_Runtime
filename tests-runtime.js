@@ -4,6 +4,7 @@ const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
+const { createSecuredFetch } = require("./tests/helpers/secured-fetch");
 
 const mockPort = 8820;
 const apexPort = 8819;
@@ -34,48 +35,49 @@ mock.listen(mockPort, "127.0.0.1", () => {
     if (!String(chunk).includes("disponible")) return;
     try {
       const base = `http://127.0.0.1:${apexPort}`;
+      const securedFetch = createSecuredFetch(base);
       const snapshot = { version: "7.0.0", executionMode: "PAPER_ONLY", feedStatus: "LIVE · GATEWAY", feedQuality: { status: "healthy", trusted: true, source: "gateway", reason: "test_fixture", lastDataAt: new Date().toISOString(), ageMs: 0, latencyMs: 1 }, decision: { confidence: 91 }, portfolio: { equity: 10000, cash: 10000, realized: 0, positions: [], recentClosedTrades: [] }, symbols: { ETHUSDT: { price: 100, analysis: { confidence: 91, trend: "Alcista", risk: "Bajo", volumeRatio: 1.4 } } }, governance: { autonomyCapPct: 5, trustScore: "92/100", liveTrading: false } };
-      let response = await fetch(`${base}/api/runtime/snapshot`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ snapshot }) });
+      let response = await securedFetch("/api/runtime/snapshot", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ snapshot }) });
       if (!response.ok) throw new Error("Snapshot rechazado");
 
-      response = await fetch(`${base}/api/runtime/mode`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: "paper_autonomous" }) });
+      response = await securedFetch("/api/runtime/mode", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: "paper_autonomous" }) });
       if (response.status !== 400) throw new Error("Autonomía se habilitó sin frase");
 
-      response = await fetch(`${base}/api/runtime/mode`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: "paper_autonomous", activationPhrase: "HABILITAR PAPER AUTO" }) });
+      response = await securedFetch("/api/runtime/mode", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: "paper_autonomous", activationPhrase: "HABILITAR PAPER AUTO" }) });
       if (!response.ok) throw new Error("No se habilitó autonomía con frase");
 
-      response = await fetch(`${base}/api/runtime/snapshot`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ snapshot: { ...snapshot, feedQuality: { status: "degraded", trusted: false, source: "gateway", reason: "test_degraded" } } }) });
+      response = await securedFetch("/api/runtime/snapshot", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ snapshot: { ...snapshot, feedQuality: { status: "degraded", trusted: false, source: "gateway", reason: "test_degraded" } } }) });
       if (!response.ok) throw new Error("Snapshot degradado rechazado");
-      response = await fetch(`${base}/api/runtime/cycle`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: "feed-degraded-test" }) });
+      response = await securedFetch("/api/runtime/cycle", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: "feed-degraded-test" }) });
       const blockedCycle = await response.json();
       if (!response.ok || !blockedCycle.ok || !blockedCycle.noop || calls !== 0) throw new Error("El runtime no bloqueó el ciclo con feed degradado");
 
-      response = await fetch(`${base}/api/runtime/snapshot`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ snapshot }) });
+      response = await securedFetch("/api/runtime/snapshot", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ snapshot }) });
       if (!response.ok) throw new Error("Snapshot saludable rechazado");
 
-      response = await fetch(`${base}/api/runtime/config`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ autonomyCapPct: 99, maxPositionPct: 99, riskPerTradePct: 99 }) });
+      response = await securedFetch("/api/runtime/config", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ autonomyCapPct: 99, maxPositionPct: 99, riskPerTradePct: 99 }) });
       const configResult = await response.json();
       if (!configResult.ok || configResult.config.autonomyCapPct !== 5 || configResult.config.maxPositionPct !== 2 || configResult.config.riskPerTradePct !== 0.5) throw new Error("Locks de configuración fallaron");
 
-      response = await fetch(`${base}/api/runtime/cycle`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: "test" }) });
+      response = await securedFetch("/api/runtime/cycle", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: "test" }) });
       const cycle = await response.json();
       if (!response.ok || !cycle.ok || cycle.noop) throw new Error(`Ciclo falló: ${JSON.stringify(cycle)}`);
       const action = cycle.action;
       if (action.name !== "execute_paper_trade") throw new Error("Mapeo autónomo incorrecto");
       if (action.arguments.capital > 200.01) throw new Error("Tamaño no fue limitado por maxPositionPct");
 
-      response = await fetch(`${base}/api/runtime/actions/${action.id}/claim`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientId: "test-browser" }) });
+      response = await securedFetch(`/api/runtime/actions/${action.id}/claim`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientId: "test-browser" }) });
       const claim = await response.json();
       if (!claim.ok || claim.action.status !== "claimed") throw new Error("Claim falló");
 
-      response = await fetch(`${base}/api/runtime/actions/${action.id}/result`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ok: true, tradeId: "TEST-1", message: "Paper ejecutado" }) });
+      response = await securedFetch(`/api/runtime/actions/${action.id}/result`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ claimId: claim.claim.claimId, nonce: claim.claim.nonce, ok: true, result: { tradeId: "TEST-1", message: "Paper ejecutado" } }) });
       const result = await response.json();
-      if (!result.ok || result.action.status !== "executed") throw new Error("Resultado no persistido");
+      if (!result.ok || result.action.status !== "completed") throw new Error("Resultado no persistido");
 
       const state = await fetch(`${base}/api/runtime/state`).then(r => r.json());
-      if (state.history[0]?.status !== "executed" || state.config.autonomyCapPct > 5) throw new Error("Estado final inválido");
+      if (state.history[0]?.status !== "completed" || state.config.autonomyCapPct > 5) throw new Error("Estado final inválido");
 
-      response = await fetch(`${base}/api/runtime/emergency`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: true, reason: "test" }) });
+      response = await securedFetch("/api/runtime/emergency", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: true, reason: "test" }) });
       const emergency = await response.json();
       if (!emergency.ok) throw new Error("Kill switch falló");
       const stopped = await fetch(`${base}/api/runtime/state`).then(r => r.json());

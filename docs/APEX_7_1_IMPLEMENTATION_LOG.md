@@ -110,3 +110,74 @@ autoridad, las superficies mutables y los límites antes de editar el runtime.
 ### Resultado
 
 `PASS`. Base local exacta, árbol limpio y suite preexistente completa en verde.
+
+## Gate 1 — Runtime Security and Action Lifecycle
+
+### Objetivo
+
+Aplicar una frontera de seguridad uniforme a todas las rutas mutables y hacer que
+el lifecycle de acciones requiera un claim criptográfico ligado a sesión.
+
+### Implementación
+
+- `SessionManager` crea `sessionId` y token de 256 bits sólo en memoria, ligados
+  a contexto de cliente, con expiración y rotación automática en cada arranque.
+- `GET /api/session/bootstrap` valida Host y contexto same-origin, responde con
+  `Cache-Control: no-store` y nunca persiste ni registra el token.
+- El cliente de seguridad se carga antes que el resto del frontend, conserva las
+  credenciales en un closure y añade headers de sesión e idempotencia a toda
+  llamada same-origin `POST`, `PATCH`, `PUT` o `DELETE`.
+- `MutableRequestGuard` centraliza Host, Origin, sesión, token, media type, tamaño
+  declarado, contrato de ruta, rate limit, idempotency key y kill switch.
+- Los contratos asignan un tipo y máximo de body por ruta; una ruta mutable no
+  registrada se rechaza.
+- El rate limit es por sesión, método y ruta.
+- Lifecycle válido: `queued → claimed → completed | failed | cancelled`.
+- Cada claim contiene `actionId`, `claimId`, `sessionId`, `claimant`, `attempt`,
+  `claimedAt`, `expiresAt` y nonce criptográfico.
+- Completar exige `claimId`, nonce, sesión propietaria, claim vigente y estado
+  `claimed`; el nonce queda consumido y un segundo efecto es imposible.
+- El kill switch impide claims y resultados pendientes, cancela la cola mediante
+  el mismo lifecycle y sólo deja pasar administración segura explícita.
+- Se eliminó el reporte externo `queued → failed` que usaba el browser al fallar
+  antes de obtener un claim válido.
+
+### Archivos
+
+- Creados:
+  `lib/runtime-security/contracts.js`,
+  `lib/runtime-security/session-manager.js`,
+  `lib/runtime-security/rate-limiter.js`,
+  `lib/runtime-security/action-claims.js`,
+  `lib/runtime-security/mutable-request-guard.js`,
+  `assets/js/runtime-security-client.js`,
+  `tests/helpers/secured-fetch.js`,
+  `tests-runtime-security.js`.
+- Modificados:
+  `server.js`, `index.html`, `assets/js/apex-7-runtime.js`, `package.json`,
+  `tests-smoke.js`, `tests-ai-flow.js`, `tests-runtime.js`.
+
+### Pruebas
+
+- `npm.cmd run test:security`: 35 aserciones negativas, exit 0.
+- Casos: token ausente/inválido/expirado, contexto ajeno, Origin inválido, Host
+  inválido, PATCH protegido, payload excesivo, JSON inválido, content type
+  inválido, rate limit, idempotency key ausente, claim expirado/ajeno/inválido,
+  resultado duplicado, transición inválida, cancelación, y kill switch antes y
+  durante el lifecycle.
+- `npm.cmd test`: 6/6 suites OK, exit 0, duración final 19.093 ms.
+- Suites preservadas: frontend contract (219 IDs), market gateway, smoke, AI
+  function calling y autonomous runtime.
+
+### Riesgos y deuda
+
+- La sesión local no sustituye autenticación multiusuario; está diseñada para el
+  runtime local de esta versión.
+- `APEX_ALLOWED_HOSTS` y `APEX_ALLOWED_ORIGINS` deben configurarse explícitamente
+  si el proceso se publica en una interfaz LAN o detrás de un reverse proxy.
+- La idempotencia de efectos PAPER se completará en Gate 2 en el ledger; Gate 1
+  garantiza idempotencia del lifecycle y exige la key en toda mutación.
+
+### Resultado
+
+`PASS`. Runtime endurecido, browser actualizado y suite completa en verde.

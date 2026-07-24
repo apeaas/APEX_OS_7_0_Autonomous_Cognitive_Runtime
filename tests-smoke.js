@@ -3,6 +3,7 @@ const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
+const { createSecuredFetch } = require("./tests/helpers/secured-fetch");
 
 const port = 8799;
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "apex7-smoke-"));
@@ -17,7 +18,9 @@ let finished = false;
 child.stdout.on("data", async chunk => {
   if (!String(chunk).includes("disponible")) return;
   try {
-    const healthRes = await fetch(`http://127.0.0.1:${port}/api/health`);
+    const base = `http://127.0.0.1:${port}`;
+    const securedFetch = createSecuredFetch(base);
+    const healthRes = await fetch(`${base}/api/health`);
     const health = await healthRes.json();
     if (!health.ok || health.version !== "7.0.0" || health.executionMode !== "PAPER_ONLY") throw new Error("Health inválido");
     if (health.externalAccounts !== false || health.liveTrading !== false) throw new Error("Locks de seguridad inválidos");
@@ -41,7 +44,7 @@ child.stdout.on("data", async chunk => {
       if (response.status !== 404) throw new Error(`El servidor expuso ${secretPath}`);
     }
 
-    const aiRes = await fetch(`http://127.0.0.1:${port}/api/assistant`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: "estado", state: {} }) });
+    const aiRes = await securedFetch("/api/assistant", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: "estado", state: {} }) });
     if (aiRes.status !== 503) throw new Error("La ausencia de clave no fue controlada");
     console.log("APEX 7.0 smoke test: OK");
     finish();
