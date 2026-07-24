@@ -1,6 +1,10 @@
-# APEX OS 7.0 — Autonomous Cognitive Runtime
+# APEX 7.1 — Constitutional Cognitive Voice Runtime
 
-APEX es un **Sistema Operativo Patrimonial Cognitivo** local: cockpit, inteligencia de mercado, comité de agentes, gobierno, memoria y ejecución PAPER bajo una política autónoma limitada.
+APEX es un **runtime constitucional de decisión patrimonial** local: observa,
+razona, simula, explica, conversa y aprende de resultados sin adquirir autoridad
+financiera. El backend mantiene una única contabilidad PAPER, un único Risk
+Engine y límites técnicos que prompts, modelos, voz o configuración no pueden
+relajar.
 
 ## Inicio
 
@@ -20,6 +24,10 @@ URL: http://127.0.0.1:5500
 - Risk y Governance con veto
 
 Consultá `INSTRUCCIONES.txt` y `docs/APEX_OS_7_MASTER_SYNOPSIS.md`.
+
+La documentación de la versión comienza en
+`docs/APEX_7_1_ARCHITECTURE.md`. Quantum Surfer queda explícitamente fuera de
+esta rama y se reserva para APEX 7.2.
 
 ## Market Data Gateway
 

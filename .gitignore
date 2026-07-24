@@ -6,6 +6,13 @@ data/apex-runtime-events.ndjson
 data/apex-client-events.ndjson
 data/apex-market-cache.json
 data/apex-market-cache.json.tmp
+data/apex-paper-ledger.ndjson
+data/apex-paper-ledger.ndjson.truncated-*.bak
+data/apex-paper-snapshot.json
+data/apex-active-constitution.json
+data/apex-improvement-audit.ndjson
+data/apex-decision-journal.ndjson
+data/apex-voice-audit.ndjson
 *.log
 .DS_Store
 Thumbs.db

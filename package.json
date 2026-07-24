@@ -1,19 +1,27 @@
 {
   "name": "apex-os-7-autonomous-cognitive-runtime",
-  "version": "7.0.0",
+  "version": "7.1.0",
   "private": true,
   "description": "Local governed AI runtime with persistent planning and PAPER autonomy for APEX OS.",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check lib/market-data/contracts.js && node --check lib/market-data/gateway.js && node --check assets/js/market-math.js && node --check assets/js/market-quality.js && node --check assets/js/apex-event-bus.js && node --check assets/js/app.js && node --check assets/js/adaptive-cockpit.js && node --check assets/js/living-cockpit.js && node --check assets/js/genesis-god-mode.js && node --check assets/js/apex-memory-ui.js && node --check assets/js/apex-ai-command.js && node --check assets/js/apex-7-runtime.js",
-    "test": "npm run check && npm run test:contract && npm run test:market && npm run test:smoke && npm run test:ai && npm run test:runtime",
+    "check": "node --check server.js && node --check lib/runtime-security/contracts.js && node --check lib/runtime-security/session-manager.js && node --check lib/runtime-security/rate-limiter.js && node --check lib/runtime-security/action-claims.js && node --check lib/runtime-security/mutable-request-guard.js && node --check lib/safety-kernel/invariants.js && node --check lib/safety-kernel/evaluator.js && node --check lib/constitution/schema.js && node --check lib/constitution/registry.js && node --check lib/constitution/evaluator.js && node --check lib/constitution/change-control.js && node --check lib/risk/contracts.js && node --check lib/risk/policy.js && node --check lib/risk/engine.js && node --check lib/risk/explain.js && node --check lib/decision-contracts/contracts.js && node --check lib/governance/contracts.js && node --check lib/governance/engine.js && node --check lib/governance/confirmations.js && node --check lib/cognitive-improvement/contracts.js && node --check lib/cognitive-improvement/audit-policy.js && node --check lib/cognitive-improvement/evaluator.js && node --check lib/cognitive-improvement/proposal-registry.js && node --check lib/decision-journal/store.js && node --check lib/autonomous-fund/model.js && node --check lib/autonomous-fund/service.js && node --check lib/paper-ledger/contracts.js && node --check lib/paper-ledger/event-store.js && node --check lib/paper-ledger/projector.js && node --check lib/paper-ledger/commands.js && node --check lib/paper-ledger/queries.js && node --check lib/paper-ledger/snapshots.js && node --check lib/paper-ledger/migration.js && node --check lib/portfolio/projection.js && node --check lib/portfolio/validators.js && node --check lib/market-data/contracts.js && node --check lib/market-data/gateway.js && node --check lib/voice/contracts.js && node --check lib/voice/session-service.js && node --check lib/voice/tool-policy.js && node --check lib/voice/command-interpreter.js && node --check lib/voice/audit.js && node --check lib/voice/runtime.js && node --check lib/voice/providers/voice-provider.js && node --check lib/voice/providers/openai-realtime-provider.js && node --check lib/voice/providers/mock-voice-provider.js && node --check assets/js/runtime-security-client.js && node --check assets/js/paper-portfolio-client.js && node --check assets/js/market-math.js && node --check assets/js/market-quality.js && node --check assets/js/apex-event-bus.js && node --check assets/js/app.js && node --check assets/js/adaptive-cockpit.js && node --check assets/js/living-cockpit.js && node --check assets/js/genesis-god-mode.js && node --check assets/js/apex-memory-ui.js && node --check assets/js/apex-ai-command.js && node --check assets/js/apex-7-runtime.js && node --check assets/js/voice/voice-state.js && node --check assets/js/voice/audio-controller.js && node --check assets/js/voice/realtime-client.js && node --check assets/js/voice/transcript-view.js && node --check assets/js/voice/voice-console.js && node --check tools/measure-apex-7-1.js && node --check tools/generate-manifest.js",
+    "test": "npm run check && npm run test:security && npm run test:ledger && npm run test:policy && npm run test:decision && npm run test:cognition && npm run test:voice && npm run test:contract && npm run test:market && npm run test:smoke && npm run test:ai && npm run test:runtime",
+    "test:security": "node tests-runtime-security.js",
+    "test:ledger": "node tests-paper-ledger.js",
+    "test:policy": "node tests-constitutional-risk-fund.js",
+    "test:decision": "node tests-decision-governance.js",
+    "test:cognition": "node tests-cognitive-improvement.js",
+    "test:voice": "node tests-voice-runtime.js",
     "test:smoke": "node tests-smoke.js",
     "test:ai": "node tests-ai-flow.js",
     "test:contract": "node tests-frontend-contract.js",
     "test:market": "node tests-market-data-gateway.js",
     "test:runtime": "node tests-runtime.js",
     "doctor": "node tools/doctor.js",
-    "backup": "node tools/backup.js"
+    "backup": "node tools/backup.js",
+    "qa:metrics": "node tools/measure-apex-7-1.js",
+    "manifest": "node tools/generate-manifest.js"
   },
   "engines": {
     "node": ">=18"

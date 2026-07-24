@@ -8,10 +8,10 @@ function ok(label, detail="") { console.log(`✔ ${label}${detail ? ` — ${deta
 function warn(label, detail="") { console.log(`⚠ ${label}${detail ? ` — ${detail}` : ""}`); }
 function fail(label, detail="") { console.error(`✖ ${label}${detail ? ` — ${detail}` : ""}`); process.exitCode=1; }
 (async()=>{
-  console.log("\nAPEX OS 7.0 · DIAGNÓSTICO LOCAL\n");
+  console.log("\nAPEX 7.1 · DIAGNÓSTICO LOCAL\n");
   const major=Number(process.versions.node.split(".")[0]);
   major>=18 ? ok("Node.js", process.version) : fail("Node.js", `se requiere 18+, detectado ${process.version}`);
-  for(const rel of ["server.js","index.html","assets/js/apex-7-runtime.js","assets/js/market-math.js","assets/js/market-quality.js","lib/market-data/contracts.js","lib/market-data/gateway.js","config/apex_autonomy.json","config/apex_permissions.json","config/apex_integrations.json"]){
+  for(const rel of ["server.js","index.html","assets/js/apex-7-runtime.js","assets/js/voice/voice-console.js","assets/js/market-math.js","assets/js/market-quality.js","lib/runtime-security/mutable-request-guard.js","lib/paper-ledger/event-store.js","lib/safety-kernel/invariants.js","lib/risk/engine.js","lib/voice/runtime.js","config/patrimonial-constitution.v1.json","config/apex_autonomy.json","config/apex_permissions.json","config/apex_integrations.json"]){
     fs.existsSync(path.join(root,rel)) ? ok(rel) : fail(rel,"archivo faltante");
   }
   try {

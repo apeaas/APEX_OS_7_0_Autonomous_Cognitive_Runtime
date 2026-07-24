@@ -1,6 +1,6 @@
-APEX OS 7.0.0
-Codename: Autonomous Cognitive Runtime
-Release class: Master PAPER Runtime
+APEX 7.1.0
+Codename: Constitutional Cognitive Voice Runtime
+Release class: Auditable PAPER Runtime
 Execution: PAPER ONLY
 External accounts: DISABLED / DEFERRED
 Live trading: HARD LOCKED

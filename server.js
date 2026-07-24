@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * APEX OS 7.0 · Autonomous Cognitive Runtime
+ * APEX OS 7.1 · Constitutional Cognitive Voice Runtime
  * Local-only orchestration layer for governed AI, persistent plans and PAPER autonomy.
  * HARD BOUNDARIES: no live trading, no broker/wallet accounts, no withdrawals, no signing.
  */
@@ -11,6 +11,26 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { MarketDataGateway } = require("./lib/market-data/gateway");
+const { ActionClaims } = require("./lib/runtime-security/action-claims");
+const { parseJsonBody, validatePayload } = require("./lib/runtime-security/contracts");
+const { MutableRequestGuard } = require("./lib/runtime-security/mutable-request-guard");
+const { SlidingWindowRateLimiter } = require("./lib/runtime-security/rate-limiter");
+const { SessionManager } = require("./lib/runtime-security/session-manager");
+const { EventStore } = require("./lib/paper-ledger/event-store");
+const { PaperLedgerCommands } = require("./lib/paper-ledger/commands");
+const { PaperLedgerQueries } = require("./lib/paper-ledger/queries");
+const { SnapshotStore } = require("./lib/paper-ledger/snapshots");
+const { AutonomousFundService } = require("./lib/autonomous-fund/service");
+const { ConstitutionRegistry } = require("./lib/constitution/registry");
+const { RiskEngine } = require("./lib/risk/engine");
+const { explainRiskDecision } = require("./lib/risk/explain");
+const { hardLocks: safetyHardLocks } = require("./lib/safety-kernel/invariants");
+const { ConfirmationRegistry } = require("./lib/governance/confirmations");
+const { GovernanceEngine } = require("./lib/governance/engine");
+const { evaluateProposal } = require("./lib/cognitive-improvement/evaluator");
+const { ProposalRegistry } = require("./lib/cognitive-improvement/proposal-registry");
+const { DecisionJournal } = require("./lib/decision-journal/store");
+const { createVoiceRuntime } = require("./lib/voice/runtime");
 const marketQuality = require("./assets/js/market-quality");
 
 const ROOT = __dirname;
@@ -22,18 +42,21 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.1";
 const OPENAI_REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || "gpt-realtime";
 const OPENAI_BASE_URL = (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "");
-const MAX_BODY_BYTES = 2_000_000;
-const WINDOW_MS = 5 * 60 * 1000;
 const MAX_REQUESTS_PER_WINDOW = Number(process.env.APEX_AI_RATE_LIMIT || 60);
 const DATA_DIR = process.env.APEX_DATA_DIR ? path.resolve(process.env.APEX_DATA_DIR) : path.join(ROOT, "data");
 const STATE_FILE = path.join(DATA_DIR, "apex-runtime-state.json");
 const RUNTIME_EVENTS_FILE = path.join(DATA_DIR, "apex-runtime-events.ndjson");
 const CLIENT_EVENTS_FILE = path.join(DATA_DIR, "apex-client-events.ndjson");
 const MARKET_CACHE_FILE = path.join(DATA_DIR, "apex-market-cache.json");
+const PAPER_LEDGER_FILE = path.join(DATA_DIR, "apex-paper-ledger.ndjson");
+const PAPER_SNAPSHOT_FILE = path.join(DATA_DIR, "apex-paper-snapshot.json");
+const CONSTITUTION_REGISTRY_FILE = path.join(DATA_DIR, "apex-active-constitution.json");
+const IMPROVEMENT_AUDIT_FILE = path.join(DATA_DIR, "apex-improvement-audit.ndjson");
+const DECISION_JOURNAL_FILE = path.join(DATA_DIR, "apex-decision-journal.ndjson");
+const VOICE_AUDIT_FILE = path.join(DATA_DIR, "apex-voice-audit.ndjson");
 const AUTONOMY_SPEC = readJsonFile(path.join(ROOT, "config", "apex_autonomy.json"), {});
 const INTEGRATION_SPEC = readJsonFile(path.join(ROOT, "config", "apex_integrations.json"), {});
 const HUMAN_AUTONOMY_CEILING_PCT = 5;
-const rateBuckets = new Map();
 let cycleInFlight = false;
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -42,6 +65,95 @@ const marketGateway = new MarketDataGateway({
   dataDir: DATA_DIR,
   cacheFile: MARKET_CACHE_FILE,
   eventSink: (eventType, payload, severity) => appendRuntimeEvent(eventType, payload, severity),
+});
+const paperEventStore = new EventStore({ filePath: PAPER_LEDGER_FILE });
+const paperSnapshotStore = new SnapshotStore({ filePath: PAPER_SNAPSHOT_FILE });
+const paperCommands = new PaperLedgerCommands({ store: paperEventStore, snapshots: paperSnapshotStore });
+paperCommands.initialize(Number(process.env.APEX_PAPER_INITIAL_CASH || 25_000));
+const paperQueries = new PaperLedgerQueries({ store: paperEventStore });
+const constitutionRegistry = new ConstitutionRegistry({
+  configPath: path.join(ROOT, "config", "patrimonial-constitution.v1.json"),
+  statePath: CONSTITUTION_REGISTRY_FILE,
+});
+const activeConstitution = constitutionRegistry.active();
+const riskEngine = new RiskEngine({ constitution: activeConstitution });
+const governanceEngine = new GovernanceEngine({ constitution: activeConstitution });
+const confirmationRegistry = new ConfirmationRegistry();
+const autonomousFund = new AutonomousFundService({ store: paperEventStore, snapshots: paperSnapshotStore });
+const proposalRegistry = new ProposalRegistry({ filePath: IMPROVEMENT_AUDIT_FILE });
+const decisionJournal = new DecisionJournal({ filePath: DECISION_JOURNAL_FILE });
+const voiceRuntime = createVoiceRuntime({
+  auditFile: VOICE_AUDIT_FILE,
+  apiKey: OPENAI_API_KEY,
+  baseUrl: OPENAI_BASE_URL,
+  model: OPENAI_REALTIME_MODEL,
+  systemInstructions: () => SYSTEM_INSTRUCTIONS,
+  readers: {
+    get_runtime_status: () => publicRuntimeState(),
+    get_market_quality: () => marketGateway.status(),
+    get_paper_portfolio: () => ({
+      projection: paperQueries.portfolio(trustedMarketPrices()),
+      integrity: paperQueries.integrity(),
+    }),
+    get_constitution: () => ({ constitution: activeConstitution, registry: constitutionRegistry.metadata() }),
+    get_autonomous_fund: () => {
+      autonomousFund.refresh();
+      return { fund: autonomousFund.current(), executionMode: "PAPER_ONLY" };
+    },
+    explain_risk: args => {
+      const riskDecision = evaluatePaperRisk(args.command || {}, "assistant");
+      return { riskDecision, explanation: explainRiskDecision(riskDecision) };
+    },
+    get_decision_journal: args => ({ entries: decisionJournal.list(args.limit) }),
+    get_documentation: () => ({
+      documents: [
+        "APEX_7_1_ARCHITECTURE.md",
+        "APEX_7_1_SECURITY.md",
+        "APEX_7_1_LEDGER_AND_MIGRATION.md",
+        "APEX_7_1_CONSTITUTION_AND_FUND.md",
+        "APEX_7_1_RISK_AND_GOVERNANCE.md",
+        "APEX_7_1_COGNITIVE_IMPROVEMENT.md",
+        "APEX_7_1_VOICE_CONSOLE.md",
+      ],
+    }),
+  },
+  limits: {
+    sessionTtlMs: Number(process.env.APEX_VOICE_SESSION_TTL_MS || 15 * 60 * 1000),
+    maxReconnects: Number(process.env.APEX_VOICE_MAX_RECONNECTS || 3),
+    maxToolCalls: Number(process.env.APEX_VOICE_MAX_TOOL_CALLS || 40),
+    maxResponses: Number(process.env.APEX_VOICE_MAX_RESPONSES || 48),
+    connectTimeoutMs: Number(process.env.APEX_VOICE_CONNECT_TIMEOUT_MS || 20_000),
+  },
+  requestContext: req => ({
+    ownerSessionId: req.apexSecurity.session.sessionId,
+    killSwitch: runtime.emergencyStop,
+  }),
+  readJson,
+  readText,
+  sendJson,
+  appendEvent: appendRuntimeEvent,
+});
+const voiceSessions = voiceRuntime.sessions;
+const sessionManager = new SessionManager({
+  ttlMs: Number(process.env.APEX_SESSION_TTL_MS || 20 * 60 * 1000),
+});
+const requestRateLimiter = new SlidingWindowRateLimiter({
+  windowMs: 5 * 60 * 1000,
+  maxRequests: MAX_REQUESTS_PER_WINDOW,
+});
+const actionClaims = new ActionClaims({
+  claimTtlMs: Number(process.env.APEX_CLAIM_TTL_MS || 60_000),
+});
+const configuredHosts = String(process.env.APEX_ALLOWED_HOSTS || "").split(",").map(value => value.trim()).filter(Boolean);
+const configuredOrigins = String(process.env.APEX_ALLOWED_ORIGINS || "").split(",").map(value => value.trim()).filter(Boolean);
+const defaultHosts = [`${HOST}:${PORT}`, `127.0.0.1:${PORT}`, `localhost:${PORT}`, `[::1]:${PORT}`];
+const defaultOrigins = defaultHosts.flatMap(host => [`http://${host}`, `https://${host}`]);
+const mutableRequestGuard = new MutableRequestGuard({
+  sessions: sessionManager,
+  rateLimiter: requestRateLimiter,
+  allowedHosts: [...defaultHosts, ...configuredHosts],
+  allowedOrigins: [...defaultOrigins, ...configuredOrigins],
+  isKillSwitchActive: () => runtime.emergencyStop,
 });
 
 const MIME = {
@@ -153,7 +265,7 @@ const AUTONOMY_TOOLS = [
 ];
 
 const SYSTEM_INSTRUCTIONS = `
-Sos APEX Cognitive Commander, el sistema nervioso del Sistema Operativo Patrimonial APEX OS 7.0.
+Sos APEX Cognitive Commander, el sistema nervioso del runtime constitucional patrimonial APEX 7.1.
 Respondé en español rioplatense, con personalidad firme, precisa y sin relleno. No sos un chatbot decorativo: observás el estado, explicás, planificás y operás la plataforma mediante herramientas gobernadas.
 
 CONSTITUCIÓN INNEGOCIABLE:
@@ -176,7 +288,7 @@ COMPORTAMIENTO:
 `;
 
 const AUTONOMY_INSTRUCTIONS = `
-Sos el comité autónomo PAPER de APEX OS 7.0. Tu tarea no es operar por operar: es seleccionar como máximo UNA acción gobernada por ciclo.
+Sos el comité autónomo PAPER de APEX 7.1. Tu tarea no es operar por operar: es seleccionar como máximo UNA acción gobernada por ciclo.
 Usá siempre una herramienta. autonomous_noop es la decisión por defecto.
 
 REGLAS DURAS:
@@ -192,7 +304,20 @@ REGLAS DURAS:
 const server = http.createServer(async (req, res) => {
   try {
     setSecurityHeaders(res);
-    const url = new URL(req.url, `http://${req.headers.host || `${HOST}:${PORT}`}`);
+    const url = new URL(req.url, `http://${HOST}:${PORT}`);
+
+    if (req.method === "GET" && url.pathname === "/api/session/bootstrap") {
+      const bootstrap = mutableRequestGuard.bootstrap(req);
+      if (!bootstrap.ok) return sendJson(res, bootstrap.statusCode, { error: bootstrap.code, message: bootstrap.message });
+      return sendJson(res, 200, bootstrap.credentials);
+    }
+
+    const authorization = mutableRequestGuard.authorize(req, url.pathname);
+    if (!authorization.ok) {
+      if (authorization.retryAfterMs) res.setHeader("Retry-After", String(Math.ceil(authorization.retryAfterMs / 1000)));
+      return sendJson(res, authorization.statusCode, { error: authorization.code, message: authorization.message });
+    }
+    req.apexSecurity = authorization;
 
     if (req.method === "GET" && url.pathname === "/api/health") return sendJson(res, 200, healthPayload());
     if (req.method === "GET" && url.pathname === "/api/runtime/state") return sendJson(res, 200, publicRuntimeState());
@@ -202,15 +327,55 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/api/integrations") return sendJson(res, 200, integrationPayload());
     if (req.method === "GET" && url.pathname === "/api/market/status") return sendJson(res, 200, marketGateway.status());
     if (req.method === "GET" && url.pathname === "/api/market/snapshot") return sendJson(res, 200, marketGateway.snapshot());
+    if (req.method === "GET" && url.pathname === "/api/portfolio") {
+      return sendJson(res, 200, {
+        ok: true,
+        projection: paperQueries.portfolio(trustedMarketPrices()),
+        migration: paperQueries.migration(),
+        integrity: paperQueries.integrity(),
+      });
+    }
+    if (req.method === "GET" && url.pathname === "/api/portfolio/events") {
+      return sendJson(res, 200, { ok: true, events: paperQueries.events(url.searchParams.get("limit")) });
+    }
+    if (req.method === "GET" && url.pathname === "/api/constitution") {
+      return sendJson(res, 200, { ok: true, constitution: activeConstitution, registry: constitutionRegistry.metadata() });
+    }
+    if (req.method === "GET" && url.pathname === "/api/fund") {
+      autonomousFund.refresh();
+      return sendJson(res, 200, { ok: true, fund: autonomousFund.current(), executionMode: "PAPER_ONLY" });
+    }
+    if (req.method === "GET" && url.pathname === "/api/risk/policy") {
+      return sendJson(res, 200, {
+        ok: true,
+        policyVersion: "unified-risk.v1",
+        constitutionVersion: activeConstitution.version,
+        profiles: activeConstitution.riskProfiles,
+      });
+    }
+    if (req.method === "GET" && url.pathname === "/api/governance/policy") {
+      return sendJson(res, 200, {
+        ok: true,
+        policyVersion: "governance.v1",
+        constitutionVersion: activeConstitution.version,
+        hierarchy: ["safety-kernel", "constitution", "governance", "risk", "human-confirmation", "paper-ledger"],
+      });
+    }
+    if (req.method === "GET" && url.pathname === "/api/improvements") {
+      return sendJson(res, 200, {
+        ok: true,
+        proposals: proposalRegistry.list(),
+        audit: url.searchParams.get("includeAudit") === "1" ? proposalRegistry.auditTrail() : undefined,
+      });
+    }
+    if (req.method === "GET" && url.pathname === "/api/decision-journal") {
+      return sendJson(res, 200, { ok: true, entries: decisionJournal.list(url.searchParams.get("limit")) });
+    }
+    if (await voiceRuntime.handle(req, res, url)) return;
     if (req.method === "GET" && url.pathname === "/api/market/history") {
       const symbol = normalizeSymbol(url.searchParams.get("symbol"));
       const history = marketGateway.history(symbol);
       return history ? sendJson(res, 200, history) : sendJson(res, 400, { error: "Símbolo no soportado." });
-    }
-
-    if (req.method === "POST" && url.pathname.startsWith("/api/")) {
-      if (!isTrustedLocalRequest(req)) return sendJson(res, 403, { error: "Origen no autorizado." });
-      if (!allowRate(req)) return sendJson(res, 429, { error: "Demasiadas solicitudes. Esperá unos segundos." });
     }
 
     if (req.method === "POST" && url.pathname === "/api/assistant") {
@@ -222,6 +387,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && url.pathname === "/api/runtime/snapshot") {
       const payload = await readJson(req);
       runtime.snapshot = sanitizeSnapshot(payload?.snapshot || payload || {});
+      delete runtime.snapshot.portfolio;
       runtime.snapshotReceivedAt = new Date().toISOString();
       runtime.client = { ...(runtime.client || {}), ...(payload?.client || {}) };
       saveRuntime();
@@ -264,7 +430,7 @@ const server = http.createServer(async (req, res) => {
     const actionMatch = url.pathname.match(/^\/api\/runtime\/actions\/([^/]+)\/(claim|result|cancel)$/);
     if (req.method === "POST" && actionMatch) {
       const payload = await readJson(req);
-      const result = mutateQueuedAction(actionMatch[1], actionMatch[2], payload || {});
+      const result = mutateQueuedActionSecure(actionMatch[1], actionMatch[2], payload || {}, req.apexSecurity.session);
       return sendJson(res, result.ok ? 200 : 400, result);
     }
 
@@ -285,13 +451,123 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, exportRuntimeSnapshot());
     }
 
-    if (req.method === "POST" && url.pathname === "/api/realtime/call") {
-      if (!OPENAI_API_KEY) return sendJson(res, 503, { error: "AI_RUNTIME_NOT_CONFIGURED" });
-      const sdp = await readText(req, MAX_BODY_BYTES);
-      if (!sdp.includes("v=0")) return sendJson(res, 400, { error: "SDP inválido" });
-      const answer = await createRealtimeCall(sdp);
-      res.writeHead(201, { "Content-Type": "application/sdp", "Cache-Control": "no-store" });
-      return res.end(answer);
+    if (req.method === "POST" && url.pathname === "/api/decision/drafts") {
+      const payload = await readJson(req);
+      const quality = marketGateway.status().quality;
+      const symbol = normalizeSymbol(payload.command.symbol);
+      const draft = confirmationRegistry.createDraft(payload.command, {
+        sessionId: req.apexSecurity.session.sessionId,
+        feedEvidence: {
+          status: quality?.status || "unknown",
+          trusted: Boolean(quality?.trusted),
+          symbol,
+          symbolFresh: Boolean(quality?.symbols?.[symbol]?.trusted),
+          expiresAt: quality?.symbols?.[symbol]?.expiresAt || null,
+        },
+      });
+      appendRuntimeEvent("COMMAND_DRAFT_CREATED", { draftId: draft.id, sessionId: draft.sessionId, interpretation: draft.interpretation }, "info");
+      return sendJson(res, 201, { ok: true, draft });
+    }
+
+    const confirmDraftMatch = url.pathname.match(/^\/api\/decision\/drafts\/([^/]+)\/confirm$/);
+    if (req.method === "POST" && confirmDraftMatch) {
+      const payload = await readJson(req);
+      const confirmation = confirmationRegistry.confirm(confirmDraftMatch[1], payload, {
+        sessionId: req.apexSecurity.session.sessionId,
+      });
+      appendRuntimeEvent("HUMAN_CONFIRMATION_RECORDED", { draftId: confirmation.draftId, confirmationId: confirmation.id, sessionId: confirmation.sessionId }, "warning");
+      return sendJson(res, 200, { ok: true, confirmation });
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/improvements") {
+      const payload = await readJson(req);
+      const proposal = proposalRegistry.create(payload, improvementContext(req));
+      appendRuntimeEvent("IMPROVEMENT_PROPOSAL_REGISTERED", { proposalId: proposal.id, source: proposal.source }, "info");
+      return sendJson(res, 201, { ok: true, proposal });
+    }
+
+    const improvementEvaluateMatch = url.pathname.match(/^\/api\/improvements\/([^/]+)\/evaluate$/);
+    if (req.method === "POST" && improvementEvaluateMatch) {
+      const payload = await readJson(req);
+      const proposal = proposalRegistry.get(improvementEvaluateMatch[1]);
+      if (!proposal) return sendJson(res, 404, { error: "PROPOSAL_NOT_FOUND", message: "Propuesta no encontrada." });
+      const evaluation = evaluateProposal(proposal, payload, improvementContext(req));
+      const updated = proposalRegistry.recordEvaluation(proposal.id, payload, evaluation, improvementContext(req));
+      appendRuntimeEvent("IMPROVEMENT_PROPOSAL_EVALUATED", { proposalId: proposal.id, decision: evaluation.decision }, evaluation.decision === "reject" ? "warning" : "info");
+      return sendJson(res, 200, { ok: true, proposal: updated, evaluation });
+    }
+
+    const improvementStatusMatch = url.pathname.match(/^\/api\/improvements\/([^/]+)\/status$/);
+    if (req.method === "POST" && improvementStatusMatch) {
+      const payload = await readJson(req);
+      const proposal = proposalRegistry.transition(improvementStatusMatch[1], payload.status, payload.details || {}, improvementContext(req));
+      appendRuntimeEvent("IMPROVEMENT_PROPOSAL_STATUS_CHANGED", { proposalId: proposal.id, status: proposal.status }, "warning");
+      return sendJson(res, 200, { ok: true, proposal });
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/paper/commands") {
+      const decisionStartedAt = Date.now();
+      const payload = await readJson(req);
+      const authorization = authorizePaperCommand(payload, req.apexSecurity);
+      const profile = authorization.autonomous ? "autonomous" : riskProfileFor(payload);
+      const riskDecision = evaluatePaperRisk(payload, profile);
+      const governanceDecision = evaluatePaperGovernance(payload, riskDecision, authorization);
+      if (!["approve", "reduce"].includes(riskDecision.decision) || !["approve", "reduce"].includes(governanceDecision.decision) || !governanceDecision.operable) {
+        appendDecisionJournal(payload, riskDecision, governanceDecision, profile, decisionStartedAt, {
+          status: "BLOCKED",
+          ledgerVersion: paperCommands.projection.version,
+        });
+      }
+      enforceRiskDecision(riskDecision);
+      enforceGovernanceDecision(governanceDecision);
+      const approved = riskDecision.decision === "reduce" ? { ...payload, capital: riskDecision.approvedSize } : payload;
+      let result;
+      try {
+        result = paperCommands.execute(approved, paperCommandContext(req, approved, riskDecision));
+      } catch (error) {
+        appendDecisionJournal(approved, riskDecision, governanceDecision, profile, decisionStartedAt, {
+          status: "FAILED",
+          ledgerVersion: paperCommands.projection.version,
+          executionError: safeError(error),
+        });
+        throw error;
+      }
+      appendDecisionJournal(approved, riskDecision, governanceDecision, profile, decisionStartedAt, {
+        status: "COMPLETED",
+        ledgerVersion: result.projection.version,
+        lastEventApplied: result.projection.lastEventApplied,
+      });
+      appendRuntimeEvent("GOVERNED_PAPER_COMMAND_COMPLETED", { commandType: payload.type, riskDecision, governanceDecision, ledgerVersion: result.projection.version }, "success");
+      return sendJson(res, 200, { ...result, riskDecision, governanceDecision, riskExplanation: explainRiskDecision(riskDecision) });
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/portfolio/import") {
+      const payload = await readJson(req);
+      const riskDecision = evaluatePaperRisk({ type: "import_legacy_portfolio" }, "manual");
+      enforceRiskDecision(riskDecision);
+      const result = paperCommands.execute({
+        type: "import_legacy_portfolio",
+        portfolio: payload.portfolio,
+        expectedVersion: payload.expectedVersion,
+      }, paperCommandContext(req, payload, riskDecision));
+      return sendJson(res, 200, {
+        ...result,
+        riskDecision,
+        checksum: paperEventStore.last()?.integrity?.checksum || null,
+      });
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/risk/evaluate") {
+      const payload = await readJson(req);
+      const profile = ["manual", "assistant", "autonomous", "event_intelligence"].includes(payload.profile) ? payload.profile : "manual";
+      const riskDecision = evaluatePaperRisk(payload, profile);
+      return sendJson(res, 200, { ok: true, riskDecision, explanation: explainRiskDecision(riskDecision) });
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/fund/commands") {
+      const payload = await readJson(req);
+      const result = autonomousFund.execute(payload, fundCommandContext(req));
+      return sendJson(res, 200, result);
     }
 
     if (req.method !== "GET" && req.method !== "HEAD") return sendJson(res, 405, { error: "Método no permitido" });
@@ -299,7 +575,7 @@ const server = http.createServer(async (req, res) => {
   } catch (error) {
     console.error("[APEX]", error);
     appendRuntimeEvent("RUNTIME_ERROR", { message: safeError(error) }, "error");
-    return sendJson(res, error.statusCode || 500, { error: "APEX_RUNTIME_ERROR", message: safeError(error) });
+    return sendJson(res, error.statusCode || 500, { error: error.code || "APEX_RUNTIME_ERROR", message: safeError(error) });
   }
 });
 
@@ -322,8 +598,8 @@ server.listen(PORT, HOST, () => {
         console.error(`Market Data Gateway: ${safeError(error)}`);
       });
   }
-  appendRuntimeEvent("SYSTEM_BOOT", { version: "7.0.0", mode: runtime.mode, restoredQueue: runtime.queue.length, restoredPlans: runtime.plans.length }, "success");
-  console.log(`\nAPEX OS 7.0 disponible en http://${HOST}:${PORT}`);
+  appendRuntimeEvent("SYSTEM_BOOT", { version: "7.1.0", mode: runtime.mode, restoredQueue: runtime.queue.length, restoredPlans: runtime.plans.length, paperLedgerEvents: paperQueries.integrity().eventCount }, "success");
+  console.log(`\nAPEX OS 7.1 disponible en http://${HOST}:${PORT}`);
   console.log(`Cognitive Runtime: ${OPENAI_API_KEY ? "CONFIGURADO" : "SIN CLAVE · local only"}`);
   console.log(`Model: ${OPENAI_MODEL} · Realtime: ${OPENAI_REALTIME_MODEL}`);
   console.log(`Mode: ${runtime.mode} · PAPER ONLY · External accounts DISABLED\n`);
@@ -338,6 +614,7 @@ async function handleAssistant(payload) {
   const prompt = String(payload?.prompt || "").trim().slice(0, 10000);
   if (!prompt) throw badRequest("Prompt vacío.");
   const state = sanitizeSnapshot(payload?.state || {});
+  state.portfolio = paperQueries.portfolio(trustedMarketPrices());
   const history = Array.isArray(payload?.history) ? payload.history.slice(-16).map(item => ({ role: item?.role === "assistant" ? "assistant" : "user", content: String(item?.content || "").slice(0, 4000) })) : [];
   const runtimeContext = publicRuntimeState();
   const input = [...history, { role: "user", content: `SOLICITUD DEL OPERADOR:\n${prompt}\n\nSNAPSHOT APEX CLIENTE:\n${JSON.stringify(state)}\n\nCOGNITIVE RUNTIME:\n${JSON.stringify(runtimeContext)}` }];
@@ -388,6 +665,8 @@ async function evaluateAutonomousCycle(options = {}) {
   if (!runtime.snapshot || !runtime.snapshotReceivedAt) return { ok: false, message: "Todavía no existe un snapshot del cockpit." };
   const feedGate = marketQuality.gate("autonomous_cycle", runtime.snapshot?.feedQuality);
   if (!feedGate.ok) return scheduleNoop(feedGate.message);
+  const authoritativeFeedGate = marketQuality.gate("autonomous_cycle", marketGateway.status().quality);
+  if (!authoritativeFeedGate.ok) return scheduleNoop(`Gateway autoritativo: ${authoritativeFeedGate.message}`);
   const ageSeconds = (Date.now() - Date.parse(runtime.snapshotReceivedAt)) / 1000;
   if (ageSeconds > runtime.config.snapshotFreshnessSeconds) return scheduleNoop(`Snapshot viejo (${Math.round(ageSeconds)}s).`);
 
@@ -399,7 +678,7 @@ async function evaluateAutonomousCycle(options = {}) {
   appendRuntimeEvent("AUTONOMOUS_CYCLE_STARTED", { manual: Boolean(options.manual), reason: options.reason, snapshotAgeSeconds: ageSeconds }, "info");
 
   try {
-    const context = { snapshot: runtime.snapshot, runtime: runtimeSummary(), config: runtime.config, activePlans: runtime.plans.filter(plan => plan.status === "active").slice(0, 10), recentActions: runtime.history.slice(0, 20) };
+    const context = { snapshot: canonicalRuntimeSnapshot(), runtime: runtimeSummary(), config: runtime.config, activePlans: runtime.plans.filter(plan => plan.status === "active").slice(0, 10), recentActions: runtime.history.slice(0, 20) };
     const response = await openAIResponse({ model: OPENAI_MODEL, instructions: AUTONOMY_INSTRUCTIONS, input: [{ role: "user", content: `Evaluá el ciclo actual. Elegí exactamente una herramienta.\n${JSON.stringify(context)}` }], tools: AUTONOMY_TOOLS, tool_choice: "required" });
     const call = extractFunctionCalls(response)[0];
     if (!call) return scheduleNoop("El modelo no devolvió una acción estructurada.");
@@ -453,70 +732,49 @@ function validateAndQueueAutonomousAction(name, args) {
 function validateAutonomousPolicy(name, args) {
   if (runtime.mode !== "paper_autonomous") return { ok: false, message: "Modo autónomo no habilitado." };
   if (runtime.emergencyStop) return { ok: false, message: "Kill switch activo." };
-  const snapshot = runtime.snapshot || {};
-  if (name !== "run_governance_audit") {
-    const feedAction = name === "execute_paper_trade" ? "paper_open" : name === "close_paper_position" ? "paper_close" : "paper_modify";
-    const feedGate = marketQuality.gate(feedAction, snapshot.feedQuality);
-    if (!feedGate.ok) return { ok: false, message: feedGate.message };
-  }
-  const equity = Number(snapshot?.portfolio?.equity || 0);
-  const cash = Number(snapshot?.portfolio?.cash || 0);
-  const positions = Array.isArray(snapshot?.portfolio?.positions) ? snapshot.portfolio.positions : [];
-  const confidence = Number(args.confidence || snapshot?.decision?.confidence || 0);
-  const dailyPnl = Number(snapshot?.portfolio?.dailyPnl || snapshot?.portfolio?.realized || 0);
-  if (!(equity > 0)) return { ok: false, message: "Equity paper no disponible." };
-  if (dailyPnl <= -(equity * runtime.config.dailyLossLimitPct / 100)) return { ok: false, message: "Límite de pérdida diaria alcanzado." };
-  if (confidence < runtime.config.minConfidence && name !== "run_governance_audit") return { ok: false, message: `Confianza ${confidence}% menor al umbral ${runtime.config.minConfidence}%.` };
-
-  if (name === "execute_paper_trade") {
-    const symbol = normalizeSymbol(args.symbol);
-    if (!runtime.config.allowedSymbols.includes(symbol)) return { ok: false, message: "Activo fuera del universo autorizado." };
-    if (!runtime.config.allowOpen) return { ok: false, message: "Aperturas autónomas deshabilitadas." };
-    if (positions.length >= runtime.config.maxConcurrentPositions) return { ok: false, message: "Máximo de posiciones concurrentes alcanzado." };
-    if (positions.some(position => position.symbol === symbol)) return { ok: false, message: "Ya existe una posición abierta en ese activo; no se permite promediar ni duplicar exposición." };
-    const entry = Number(args.entry); const stop = Number(args.stop); const target = Number(args.target); let capital = Number(args.capital);
-    if (!(entry > stop && target > entry && stop > 0)) return { ok: false, message: "Entrada, stop y target inválidos para long spot." };
-    const rr = (target - entry) / (entry - stop);
-    if (rr < runtime.config.minRiskReward) return { ok: false, message: `R/R ${rr.toFixed(2)} menor al mínimo ${runtime.config.minRiskReward}.` };
-    const currentExposure = positions.reduce((sum, item) => sum + Number(item.capital || 0), 0);
-    const totalBudget = equity * runtime.config.autonomyCapPct / 100;
-    const positionLimit = equity * runtime.config.maxPositionPct / 100;
-    const remainingBudget = Math.max(0, totalBudget - currentExposure);
-    capital = Math.min(capital, positionLimit, remainingBudget, cash);
-    if (capital < 10) return { ok: false, message: "Presupuesto autónomo remanente insuficiente." };
-    const riskAmt = capital * ((entry - stop) / entry);
-    const riskLimit = equity * runtime.config.riskPerTradePct / 100;
-    if (riskAmt > riskLimit) {
-      const maxCapitalByRisk = riskLimit / ((entry - stop) / entry);
-      capital = Math.min(capital, maxCapitalByRisk);
-    }
-    if (capital < 10) return { ok: false, message: "El tamaño compatible con Risk es demasiado pequeño." };
-    return { ok: true, arguments: { ...args, symbol, capital: round(capital, 2), entry, stop, target }, metrics: { equity, currentExposure, totalBudget, remainingBudget, positionLimit, riskLimit, riskAmt: round(capital * ((entry - stop) / entry), 2), rr: round(rr, 2), confidence } };
-  }
-
-  if (name === "close_paper_position") {
-    if (!runtime.config.allowClose) return { ok: false, message: "Cierres autónomos deshabilitados." };
-    if (!positions.length) return { ok: false, message: "No hay posiciones para cerrar." };
-    return { ok: true, arguments: { ...args, fraction: clamp(Number(args.fraction || 1), 0.01, 1) }, metrics: { confidence } };
-  }
-
-  if (name === "modify_paper_position") {
-    if (!runtime.config.allowModifyProtection) return { ok: false, message: "Modificaciones autónomas deshabilitadas." };
-    if (!positions.length) return { ok: false, message: "No hay posiciones para modificar." };
-    const position = findSnapshotPosition(positions, args);
-    if (!position) return { ok: false, message: "No se identificó una posición única." };
-    const current = Number(position.currentPrice || position.entry || 0);
-    const newStop = args.stop == null ? Number(position.stop || 0) : Number(args.stop);
-    if (!(newStop > 0 && newStop < current)) return { ok: false, message: "Stop autónomo inválido." };
-    if (Number(position.stop || 0) > 0 && newStop < Number(position.stop)) return { ok: false, message: "La autonomía no puede alejar el stop y aumentar riesgo." };
-    return { ok: true, arguments: { ...args, trade_id: args.trade_id || position.id }, metrics: { confidence, current, priorStop: position.stop, newStop } };
-  }
-
   if (name === "run_governance_audit") {
     if (!runtime.config.allowGovernanceAudit) return { ok: false, message: "Auditoría autónoma deshabilitada." };
-    return { ok: true, arguments: { reason: args.reason || "Auditoría preventiva autónoma" }, metrics: { confidence } };
+    return { ok: true, arguments: { reason: args.reason || "Auditoría preventiva autónoma" }, metrics: { policyVersion: "unified-risk.v1" } };
   }
-  return { ok: false, message: "Política no definida." };
+  const type = {
+    execute_paper_trade: "open_position",
+    close_paper_position: "close_position",
+    modify_paper_position: "modify_position",
+  }[name];
+  if (!type) return { ok: false, message: "Política no definida." };
+  if (type === "open_position" && !runtime.config.allowOpen) return { ok: false, message: "Aperturas autónomas deshabilitadas." };
+  if (type === "close_position" && !runtime.config.allowClose) return { ok: false, message: "Cierres autónomos deshabilitados." };
+  if (type === "modify_position" && !runtime.config.allowModifyProtection) return { ok: false, message: "Modificaciones autónomas deshabilitadas." };
+  const symbol = normalizeSymbol(args.symbol);
+  if (type === "open_position" && !runtime.config.allowedSymbols.includes(symbol)) return { ok: false, message: "Activo fuera del universo autorizado." };
+  const confidence = Number(args.confidence || runtime.snapshot?.decision?.confidence || 0);
+  if (confidence < runtime.config.minConfidence) return { ok: false, message: `Confianza ${confidence}% menor al umbral ${runtime.config.minConfidence}%.` };
+  const portfolio = paperQueries.portfolio(trustedMarketPrices());
+  const position = findSnapshotPosition(portfolio.positions, args);
+  const intent = {
+    ...args,
+    type,
+    symbol: symbol || position?.symbol,
+    positionId: args.trade_id || position?.id,
+    exit: type === "close_position" ? Number(trustedMarketPrices()[position?.symbol]) : args.exit,
+    source: "AUTONOMOUS_RUNTIME",
+  };
+  const decision = evaluatePaperRisk(intent, "autonomous");
+  if (!["approve", "reduce"].includes(decision.decision)) {
+    return { ok: false, message: `Risk ${decision.decision}: ${decision.reasons.join(", ")}.`, riskDecision: decision };
+  }
+  return {
+    ok: true,
+    arguments: {
+      ...args,
+      symbol: intent.symbol,
+      trade_id: intent.positionId,
+      capital: type === "open_position" ? decision.approvedSize : args.capital,
+      exit: intent.exit,
+      source: "AUTONOMOUS_RUNTIME",
+    },
+    metrics: { confidence, riskDecision: decision },
+  };
 }
 
 function scheduleNoop(reason) {
@@ -530,36 +788,72 @@ function scheduleNoop(reason) {
   return { ok: true, noop: true, message: reason };
 }
 
-function mutateQueuedAction(id, operation, payload) {
+function mutateQueuedActionSecure(id, operation, payload, session) {
   const action = runtime.queue.find(item => item.id === id);
-  if (!action) return { ok: false, message: "Acción no encontrada." };
+  if (!action) return { ok: false, code: "ACTION_NOT_FOUND", message: "Acción no encontrada." };
+
   if (operation === "claim") {
-    if (action.status !== "queued") return { ok: false, message: `Acción en estado ${action.status}.` };
-    if (Date.parse(action.expiresAt) < Date.now()) { action.status = "expired"; saveRuntime(); return { ok: false, message: "Acción expirada." }; }
-    action.status = "claimed"; action.claimedAt = new Date().toISOString(); action.claimedBy = payload?.clientId || "browser";
-    saveRuntime(); appendRuntimeEvent("AUTONOMOUS_ACTION_CLAIMED", { actionId: id, name: action.name }, "info");
-    return { ok: true, action };
+    const result = actionClaims.claim(action, {
+      sessionId: session.sessionId,
+      claimant: payload?.claimant || payload?.clientId || "browser",
+      killSwitch: runtime.emergencyStop,
+    });
+    if (!result.ok) return result;
+    saveRuntime();
+    appendRuntimeEvent("AUTONOMOUS_ACTION_CLAIMED", {
+      actionId: id,
+      claimId: result.claim.claimId,
+      name: action.name,
+      sessionId: session.sessionId,
+    }, "info");
+    return result;
   }
+
   if (operation === "cancel") {
-    if (["executed", "failed", "cancelled"].includes(action.status)) return { ok: false, message: "Acción ya finalizada." };
-    action.status = "cancelled"; action.cancelledAt = new Date().toISOString(); action.cancelReason = payload?.reason || "Cancelada";
-    saveRuntime(); appendRuntimeEvent("AUTONOMOUS_ACTION_CANCELLED", { actionId: id, reason: action.cancelReason }, "warning");
-    return { ok: true, action };
+    const result = actionClaims.cancel(action, payload?.reason, { sessionId: session.sessionId });
+    if (!result.ok) return result;
+    saveRuntime();
+    appendRuntimeEvent("AUTONOMOUS_ACTION_CANCELLED", {
+      actionId: id,
+      reason: action.cancelReason,
+      sessionId: session.sessionId,
+    }, "warning");
+    return result;
   }
+
   if (operation === "result") {
-    if (![
-      "claimed", "queued"
-    ].includes(action.status)) return { ok: false, message: `No se puede reportar resultado en estado ${action.status}.` };
-    action.status = payload?.ok === false ? "failed" : "executed";
-    action.completedAt = new Date().toISOString(); action.result = sanitizeSnapshot(payload || {});
-    runtime.history.unshift({ id: action.id, name: action.name, summary: action.summary, status: action.status, createdAt: action.createdAt, completedAt: action.completedAt, result: action.result });
-    runtime.stats.executedActions += action.status === "executed" ? 1 : 0;
+    const result = actionClaims.complete(action, {
+      claimId: payload.claimId,
+      nonce: payload.nonce,
+      ok: payload.ok,
+      result: sanitizeSnapshot(payload.result ?? payload),
+    }, {
+      sessionId: session.sessionId,
+      killSwitch: runtime.emergencyStop,
+    });
+    if (!result.ok) return result;
+    runtime.history.unshift({
+      id: action.id,
+      name: action.name,
+      summary: action.summary,
+      status: action.status,
+      createdAt: action.createdAt,
+      completedAt: action.completedAt,
+      result: action.result,
+    });
+    runtime.stats.executedActions += action.status === "completed" ? 1 : 0;
     runtime.stats.failedActions += action.status === "failed" ? 1 : 0;
-    trimRuntimeCollections(); saveRuntime();
-    appendRuntimeEvent(action.status === "executed" ? "AUTONOMOUS_ACTION_EXECUTED" : "AUTONOMOUS_ACTION_FAILED", { actionId: id, name: action.name, result: action.result }, action.status === "executed" ? "success" : "error");
-    return { ok: true, action };
+    trimRuntimeCollections();
+    saveRuntime();
+    appendRuntimeEvent(
+      action.status === "completed" ? "AUTONOMOUS_ACTION_COMPLETED" : "AUTONOMOUS_ACTION_FAILED",
+      { actionId: id, claimId: payload.claimId, name: action.name, result: action.result },
+      action.status === "completed" ? "success" : "error",
+    );
+    return result;
   }
-  return { ok: false, message: "Operación inválida." };
+
+  return { ok: false, code: "INVALID_OPERATION", message: "Operación inválida." };
 }
 
 function changeMode(mode, options = {}) {
@@ -600,7 +894,9 @@ function updateRuntimeConfig(input) {
 
 function activateEmergencyStop(reason) {
   runtime.emergencyStop = true; runtime.mode = "suspended"; runtime.cycleStatus = "emergency"; runtime.nextCycleAt = null;
-  runtime.queue.forEach(action => { if (["queued", "claimed"].includes(action.status)) { action.status = "cancelled"; action.cancelReason = "Kill switch"; action.cancelledAt = new Date().toISOString(); } });
+  runtime.queue.forEach(action => {
+    if (["queued", "claimed"].includes(action.status)) actionClaims.cancel(action, "Kill switch", { system: true });
+  });
   saveRuntime(); appendRuntimeEvent("EMERGENCY_STOP_ACTIVATED", { reason }, "error");
   return { ok: true, message: "KILL SWITCH ACTIVO. Ciclos suspendidos y cola cancelada." };
 }
@@ -641,18 +937,220 @@ function createPlanFromAction(args) {
 }
 
 function publicRuntimeState() {
-  return { ok: true, service: "APEX Autonomous Cognitive Runtime", version: "7.0.0", configured: Boolean(OPENAI_API_KEY), model: OPENAI_MODEL, realtimeModel: OPENAI_REALTIME_MODEL, executionMode: "PAPER_ONLY", externalAccounts: false, liveTrading: false, mode: runtime.mode, emergencyStop: runtime.emergencyStop, cycleStatus: runtime.cycleStatus, lastCycleAt: runtime.lastCycleAt, nextCycleAt: runtime.nextCycleAt, snapshotReceivedAt: runtime.snapshotReceivedAt, snapshotFresh: isSnapshotFresh(), config: runtime.config, stats: runtime.stats, queue: runtime.queue.slice(0, 50), history: runtime.history.slice(0, 50), plans: runtime.plans.slice(0, 50), lastCycleDecision: runtime.lastCycleDecision, hardLocks: hardLocks(), integrations: integrationPayload().adapters };
+  autonomousFund.refresh();
+  return { ok: true, service: "APEX Constitutional Cognitive Voice Runtime", version: "7.1.0", configured: Boolean(OPENAI_API_KEY), model: OPENAI_MODEL, realtimeModel: OPENAI_REALTIME_MODEL, executionMode: "PAPER_ONLY", externalAccounts: false, liveTrading: false, mode: runtime.mode, emergencyStop: runtime.emergencyStop, cycleStatus: runtime.cycleStatus, lastCycleAt: runtime.lastCycleAt, nextCycleAt: runtime.nextCycleAt, snapshotReceivedAt: runtime.snapshotReceivedAt, snapshotFresh: isSnapshotFresh(), config: runtime.config, stats: runtime.stats, queue: runtime.queue.slice(0, 50), history: runtime.history.slice(0, 50), plans: runtime.plans.slice(0, 50), lastCycleDecision: runtime.lastCycleDecision, hardLocks: hardLocks(), constitution: constitutionRegistry.metadata(), riskPolicyVersion: "unified-risk.v1", fund: autonomousFund.current(), integrations: integrationPayload().adapters, voice: voiceSessions.getHealth() };
 }
 
 function runtimeSummary() {
-  const positions = runtime.snapshot?.portfolio?.positions || [];
-  const equity = Number(runtime.snapshot?.portfolio?.equity || 0);
-  const exposure = positions.reduce((sum, item) => sum + Number(item.capital || 0), 0);
+  const portfolio = paperQueries.portfolio(trustedMarketPrices());
+  const positions = portfolio.positions;
+  const equity = Number(portfolio.equity || 0);
+  const exposure = Number(portfolio.exposure?.gross || 0);
   return { mode: runtime.mode, emergencyStop: runtime.emergencyStop, cycleStatus: runtime.cycleStatus, configured: Boolean(OPENAI_API_KEY), lastCycleAt: runtime.lastCycleAt, nextCycleAt: runtime.nextCycleAt, snapshotReceivedAt: runtime.snapshotReceivedAt, snapshotFresh: isSnapshotFresh(), queueCount: runtime.queue.filter(item => ["queued", "claimed"].includes(item.status)).length, activePlanCount: runtime.plans.filter(item => item.status === "active").length, autonomyCapPct: runtime.config.autonomyCapPct, equity, currentExposure: exposure, autonomousBudget: equity * runtime.config.autonomyCapPct / 100, remainingAutonomousBudget: Math.max(0, equity * runtime.config.autonomyCapPct / 100 - exposure) };
 }
 
 function healthPayload() {
-  return { ok: true, service: "APEX Autonomous Cognitive Runtime", version: "7.0.0", model: OPENAI_MODEL, realtimeModel: OPENAI_REALTIME_MODEL, configured: Boolean(OPENAI_API_KEY), executionMode: "PAPER_ONLY", externalAccounts: false, liveTrading: false, mode: runtime.mode, emergencyStop: runtime.emergencyStop, dataStore: "local-json+ndjson", marketData: marketGateway.status(), uptimeSeconds: Math.round(process.uptime()) };
+  return { ok: true, service: "APEX Constitutional Cognitive Voice Runtime", version: "7.1.0", model: OPENAI_MODEL, realtimeModel: OPENAI_REALTIME_MODEL, configured: Boolean(OPENAI_API_KEY), executionMode: "PAPER_ONLY", externalAccounts: false, liveTrading: false, mode: runtime.mode, emergencyStop: runtime.emergencyStop, dataStore: "append-only-paper-ledger+local-runtime-json", paperLedger: paperQueries.integrity(), marketData: marketGateway.status(), voice: voiceSessions.getHealth(), uptimeSeconds: Math.round(process.uptime()) };
+}
+
+function canonicalRuntimeSnapshot() {
+  return {
+    ...(runtime.snapshot || {}),
+    portfolio: paperQueries.portfolio(trustedMarketPrices()),
+  };
+}
+
+function trustedMarketPrices() {
+  const status = marketGateway.status();
+  if (!status.quality?.trusted) return {};
+  const snapshot = marketGateway.snapshot();
+  return Object.fromEntries(Object.entries(snapshot.symbols || {}).map(([symbol, value]) => [symbol, value?.ticker?.price]).filter(([, price]) => Number.isFinite(Number(price)) && Number(price) > 0));
+}
+
+function authorizePaperCommand(payload, security) {
+  const sessionId = security.session.sessionId;
+  if (String(payload.source || "").toUpperCase() === "AUTONOMOUS_RUNTIME") {
+    const action = runtime.queue.find(item => item.id === payload.actionId);
+    const claim = action?.claim;
+    const expectedName = {
+      open_position: "execute_paper_trade",
+      close_position: "close_paper_position",
+      modify_position: "modify_paper_position",
+    }[payload.type];
+    const valid = action
+      && action.status === "claimed"
+      && action.name === expectedName
+      && claim
+      && claim.sessionId === sessionId
+      && claim.claimId === payload.claimId
+      && secureStringEqual(claim.nonce, payload.claimNonce)
+      && Date.parse(claim.expiresAt) > Date.now()
+      && claimMatchesCommand(action, payload);
+    if (!valid) {
+      const error = new Error("La autonomía requiere un claim vigente, ligado a sesión y al comando exacto.");
+      error.code = "VALID_ACTION_CLAIM_REQUIRED";
+      error.statusCode = 403;
+      throw error;
+    }
+    return { autonomous: true, validClaim: true, actionId: action.id };
+  }
+  if (!payload.draftId || !payload.confirmationId) {
+    const error = new Error("El comando requiere CommandDraft y HumanConfirmation vigentes.");
+    error.code = "HUMAN_CONFIRMATION_REQUIRED";
+    error.statusCode = 403;
+    throw error;
+  }
+  const consumed = confirmationRegistry.consume(payload.draftId, payload.confirmationId, payload, {
+    sessionId,
+    idempotencyKey: security.idempotencyKey,
+  });
+  return { autonomous: false, validClaim: false, ...consumed };
+}
+
+function claimMatchesCommand(action, command) {
+  const expected = action.arguments || {};
+  const pairs = command.type === "open_position"
+    ? [["symbol", "symbol"], ["capital", "capital"], ["entry", "entry"], ["stop", "stop"], ["target", "target"]]
+    : command.type === "close_position"
+      ? [["trade_id", "positionId"], ["fraction", "fraction"]]
+      : [["trade_id", "positionId"], ["stop", "stop"], ["target", "target"]];
+  return pairs.every(([actionKey, commandKey]) => {
+    if (expected[actionKey] == null && command[commandKey] == null) return true;
+    return String(expected[actionKey]) === String(command[commandKey]);
+  });
+}
+
+function secureStringEqual(left, right) {
+  const first = Buffer.from(String(left || ""));
+  const second = Buffer.from(String(right || ""));
+  return first.length === second.length && crypto.timingSafeEqual(first, second);
+}
+
+function evaluatePaperRisk(intent, profile) {
+  const portfolio = paperQueries.portfolio(trustedMarketPrices());
+  const marketStatus = marketGateway.status();
+  const symbol = normalizeSymbol(intent.symbol);
+  const dailyPnl = portfolio.closedTrades
+    .filter(trade => Date.now() - Date.parse(trade.closedAt) < 86_400_000)
+    .reduce((sum, trade) => sum + Number(trade.pnl || 0), 0);
+  autonomousFund.refresh();
+  return riskEngine.evaluateIntent({
+    ...intent,
+    symbol,
+    executionMode: "PAPER_ONLY",
+    stage: activeConstitution.stage,
+  }, {
+    profile,
+    portfolio,
+    dailyPnl,
+    runtimeConfig: runtime.config,
+    feedQuality: marketStatus.quality,
+    symbolQuality: marketStatus.quality?.symbols?.[symbol],
+    killSwitch: runtime.emergencyStop,
+    fund: autonomousFund.current(),
+  });
+}
+
+function evaluatePaperGovernance(intent, riskDecision, authorization) {
+  const status = marketGateway.status();
+  const symbol = normalizeSymbol(intent.symbol);
+  const marketDependent = ["open_position", "close_position", "modify_position"].includes(intent.type);
+  autonomousFund.refresh();
+  return governanceEngine.evaluate({ intent: {
+    ...intent,
+    executionMode: "PAPER_ONLY",
+    stage: activeConstitution.stage,
+  }, riskDecision }, {
+    autonomous: authorization.autonomous,
+    validClaim: authorization.validClaim,
+    killSwitch: runtime.emergencyStop,
+    feedTrusted: Boolean(status.quality?.trusted),
+    symbolFresh: Boolean(status.quality?.symbols?.[symbol]?.trusted ?? status.quality?.trusted),
+    marketDependent,
+    fund: autonomousFund.current(),
+  });
+}
+
+function enforceRiskDecision(decision) {
+  if (["approve", "reduce"].includes(decision.decision)) return;
+  const error = new Error(`Risk ${decision.decision}: ${decision.reasons.join(", ")}.`);
+  error.code = decision.decision === "delay" ? "RISK_DELAYED" : "RISK_REJECTED";
+  error.statusCode = 409;
+  error.riskDecision = decision;
+  throw error;
+}
+
+function enforceGovernanceDecision(decision) {
+  if (["approve", "reduce"].includes(decision.decision) && decision.operable) return;
+  const error = new Error(`Governance ${decision.decision}: ${decision.reasons.join(", ")}.`);
+  error.code = decision.decision === "veto" ? "GOVERNANCE_VETO" : "GOVERNANCE_REJECTED";
+  error.statusCode = 409;
+  error.governanceDecision = decision;
+  throw error;
+}
+
+function riskProfileFor(payload) {
+  const source = String(payload.source || "").toUpperCase();
+  if (source === "AUTONOMOUS_RUNTIME") return "autonomous";
+  if (source === "AI_COMMAND" || source === "VOICE_COMMAND") return "assistant";
+  return "manual";
+}
+
+function paperCommandContext(req, payload = {}, riskDecision = null) {
+  const autonomousKey = String(payload.source || "").toUpperCase() === "AUTONOMOUS_RUNTIME" && payload.actionId
+    ? `autonomous-action:${payload.actionId}`
+    : req.apexSecurity.idempotencyKey;
+  return {
+    idempotencyKey: autonomousKey,
+    sessionId: req.apexSecurity.session.sessionId,
+    actor: { type: "human_operator", id: req.apexSecurity.session.sessionId },
+    authority: "human_operator",
+    correlationId: String(payload.correlationId || autonomousKey).slice(0, 160),
+    causationId: String(payload.causationId || autonomousKey).slice(0, 160),
+    policyVersion: riskDecision?.policyVersion || "paper-ledger.v1",
+    killSwitch: runtime.emergencyStop,
+  };
+}
+
+function fundCommandContext(req) {
+  return {
+    idempotencyKey: req.apexSecurity.idempotencyKey,
+    sessionId: req.apexSecurity.session.sessionId,
+    actor: { type: "human_operator", id: req.apexSecurity.session.sessionId },
+    authority: "human_operator",
+    policyVersion: "autonomous-fund.v1",
+    killSwitch: runtime.emergencyStop,
+  };
+}
+
+function improvementContext(req) {
+  return {
+    actor: { type: "human_operator", id: req.apexSecurity.session.sessionId },
+    sessionId: req.apexSecurity.session.sessionId,
+    idempotencyKey: req.apexSecurity.idempotencyKey,
+  };
+}
+
+function appendDecisionJournal(intent, riskDecision, governanceDecision, profile, startedAt, outcome) {
+  return decisionJournal.append({
+    context: {
+      runtimeMode: runtime.mode,
+      profile,
+      constitutionVersion: activeConstitution.version,
+      policyVersion: riskDecision.policyVersion,
+      executionMode: "PAPER_ONLY",
+    },
+    evidence: [riskDecision.feedEvidence],
+    intent: sanitizeSnapshot(intent),
+    risk: sanitizeSnapshot(riskDecision),
+    governance: sanitizeSnapshot(governanceDecision),
+    decision: governanceDecision.decision,
+    latencyMs: Math.max(0, Date.now() - startedAt),
+    outcome: sanitizeSnapshot(outcome),
+    interpretationError: sanitizeSnapshot(outcome?.interpretationError ?? null),
+    timingError: sanitizeSnapshot(outcome?.timingError ?? null),
+    executionError: sanitizeSnapshot(outcome?.executionError ?? null),
+  });
 }
 
 function integrationPayload() {
@@ -661,7 +1159,7 @@ function integrationPayload() {
 }
 
 function hardLocks() {
-  return { liveTrading: false, externalAccounts: false, withdrawals: false, walletSigning: false, humanAutonomyCeilingPct: HUMAN_AUTONOMY_CEILING_PCT, autonomyCeilingMutableByAI: false, averagingDown: false, longSpotOnly: true };
+  return safetyHardLocks();
 }
 
 function commandCatalog() {
@@ -672,20 +1170,6 @@ function createChatRuntimeAction(name, args) {
   if (name === "create_plan") return createPlanFromAction(args);
   if (name === "manage_plan") return updatePlan(args.plan_id, { status: args.status, reason: args.reason });
   return null;
-}
-
-async function createRealtimeCall(sdp) {
-  const form = new FormData();
-  form.set("sdp", new Blob([sdp], { type: "application/sdp" }), "offer.sdp");
-  form.set("session", new Blob([JSON.stringify({ type: "realtime", model: OPENAI_REALTIME_MODEL, instructions: `${SYSTEM_INSTRUCTIONS}\nEn voz, sé breve. No ejecutes herramientas directamente: transcribí y remití los comandos operativos al Command Runtime.`, output_modalities: ["audio"], audio: { input: { noise_reduction: { type: "far_field" }, transcription: { model: "gpt-4o-mini-transcribe", language: "es" }, turn_detection: { type: "semantic_vad", create_response: true, interrupt_response: true, eagerness: "auto" } }, output: { voice: "marin", speed: 1.02 } } })], { type: "application/json" }), "session.json");
-  const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), 45_000);
-  try {
-    const response = await fetch(`${OPENAI_BASE_URL}/realtime/calls`, { method: "POST", headers: { Authorization: `Bearer ${OPENAI_API_KEY}` }, body: form, signal: controller.signal });
-    const text = await response.text();
-    if (!response.ok) throw Object.assign(new Error(text.slice(0, 500) || `Realtime ${response.status}`), { statusCode: 502 });
-    appendRuntimeEvent("REALTIME_CALL_CREATED", { model: OPENAI_REALTIME_MODEL }, "success");
-    return text;
-  } finally { clearTimeout(timeout); }
 }
 
 async function openAIResponse(body) {
@@ -750,6 +1234,7 @@ function loadRuntimeState() {
   merged.queue = Array.isArray(merged.queue) ? merged.queue : [];
   merged.history = Array.isArray(merged.history) ? merged.history : [];
   merged.plans = Array.isArray(merged.plans) ? merged.plans : [];
+  if (merged.snapshot && typeof merged.snapshot === "object") delete merged.snapshot.portfolio;
   return merged;
 }
 
@@ -770,11 +1255,17 @@ function serveStatic(pathname, req, res) {
   fs.stat(filePath, (err, stat) => { if (err || !stat.isFile()) return sendJson(res, 404, { error: "No encontrado" }); const type = MIME[path.extname(filePath).toLowerCase()] || "application/octet-stream"; res.writeHead(200, { "Content-Type": type, "Cache-Control": "no-store" }); if (req.method === "HEAD") return res.end(); fs.createReadStream(filePath).pipe(res); });
 }
 
-function readJson(req) { return readText(req, MAX_BODY_BYTES).then(text => { try { return JSON.parse(text || "{}"); } catch { throw badRequest("JSON inválido."); } }); }
-function readText(req, maxBytes = MAX_BODY_BYTES) { return new Promise((resolve, reject) => { let size = 0; const chunks = []; req.on("data", chunk => { size += chunk.length; if (size > maxBytes) { reject(Object.assign(new Error("Solicitud demasiado grande."), { statusCode: 413 })); req.destroy(); return; } chunks.push(chunk); }); req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8"))); req.on("error", reject); }); }
-function allowRate(req) { const key = req.socket.remoteAddress || "local"; const now = Date.now(); const bucket = rateBuckets.get(key) || []; const active = bucket.filter(timestamp => now - timestamp < WINDOW_MS); if (active.length >= MAX_REQUESTS_PER_WINDOW) return false; active.push(now); rateBuckets.set(key, active); return true; }
+function readJson(req) {
+  return readText(req, req.apexSecurity?.maxBytes).then(text => {
+    const payload = parseJsonBody(text);
+    const pathname = new URL(req.url, `http://${HOST}:${PORT}`).pathname;
+    const validation = validatePayload(req.method, pathname, payload);
+    if (!validation.ok) throw badRequest(validation.message);
+    return payload;
+  });
+}
+function readText(req, maxBytes = 2_000_000) { return new Promise((resolve, reject) => { let size = 0; const chunks = []; req.on("data", chunk => { size += chunk.length; if (size > maxBytes) { reject(Object.assign(new Error("Solicitud demasiado grande."), { statusCode: 413 })); req.destroy(); return; } chunks.push(chunk); }); req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8"))); req.on("error", reject); }); }
 function setSecurityHeaders(res) { res.setHeader("X-Content-Type-Options", "nosniff"); res.setHeader("X-Frame-Options", "DENY"); res.setHeader("Referrer-Policy", "no-referrer"); res.setHeader("Cross-Origin-Resource-Policy", "same-origin"); res.setHeader("Permissions-Policy", "geolocation=(), camera=(), payment=()"); }
-function isTrustedLocalRequest(req) { const origin = req.headers.origin; if (!origin) return true; try { const parsed = new URL(origin); return ["127.0.0.1", "localhost"].includes(parsed.hostname) && Number(parsed.port || 80) === PORT; } catch { return false; } }
 function sendJson(res, status, payload) { const body = JSON.stringify(payload); res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" }); res.end(body); }
 
 function sanitizeSnapshot(input) { const json = JSON.stringify(input, (_key, value) => { if (typeof value === "string") return value.slice(0, 3000); if (Array.isArray(value)) return value.slice(0, 100); return value; }); return safeJson(json, {}); }

@@ -5,14 +5,15 @@
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
 <meta content="#070b16" name="theme-color"/>
-<title>APEX OS 7.0 · Autonomous Cognitive Runtime</title>
+<title>APEX 7.1 · Constitutional Cognitive Voice Runtime</title>
 <link href="assets/css/style.css" rel="stylesheet"/>
 <link href="assets/css/adaptive-cockpit.css" rel="stylesheet"/>
 <link href="assets/css/living-cockpit.css" rel="stylesheet"/>
 <link href="assets/css/genesis-god-mode.css" rel="stylesheet"/>
 <link href="assets/css/event-memory.css" rel="stylesheet"/>
 <link href="assets/css/ai-command.css" rel="stylesheet"/>
-<link href="assets/css/apex-7-runtime.css" rel="stylesheet"/></head>
+<link href="assets/css/apex-7-runtime.css" rel="stylesheet"/>
+<link href="assets/css/voice-console.css" rel="stylesheet"/></head>
 <body class="apex-genesis">
 <div class="ambient-grid"></div>
 <div class="app-shell" id="app">
@@ -185,7 +186,7 @@
 <div class="quick-chat-row ai-upgraded"><button aria-label="Hablar con APEX" class="ai-mic" id="cockpitMicBtn" type="button">◉</button><input aria-label="Preguntá a APEX desde Mission Control" id="cockpitChatInput" placeholder="Decile qué querés analizar o hacer..." type="text"/><button aria-label="Enviar" class="btn primary" id="cockpitChatSend">➤</button></div>
 </article>
 </div>
-<footer class="cockpit-footer"><span>APEX OS 7.0 · AUTONOMOUS COGNITIVE RUNTIME</span><strong><i></i>DATOS EN VIVO CONECTADOS</strong><span>SERVIDOR: ÓPTIMO · PAPER ONLY</span></footer>
+<footer class="cockpit-footer"><span>APEX 7.1 · CONSTITUTIONAL COGNITIVE VOICE RUNTIME</span><strong><i></i>DATOS EN VIVO CONECTADOS</strong><span>SERVIDOR: ÓPTIMO · PAPER ONLY</span></footer>
 </section>
 <section aria-live="polite" class="active-workspace-shell">
 <div class="workspace-placeholder" id="workspacePlaceholder">
@@ -343,7 +344,7 @@
 
 <section class="memory-foundation" id="eventBusPanel">
   <div class="memory-foundation-head">
-    <div><p class="eyebrow">APEX 7.0 FOUNDATION</p><h3>Core Event Bus, Memory &amp; AI Command</h3><p>Cada evidencia, objeción, auditoría, decisión y resultado paper queda persistido con identidad, correlación y checksum.</p></div>
+    <div><p class="eyebrow">APEX 7.1 FOUNDATION</p><h3>Core Event Bus, Memory &amp; AI Command</h3><p>Cada evidencia, objeción, auditoría, decisión y resultado paper queda persistido con identidad, correlación y checksum.</p></div>
     <div class="memory-foundation-actions">
       <button class="btn secondary" id="verifyIntegrityBtn">Verificar integridad</button>
       <button class="btn primary" id="exportEventSnapshotBtn">Exportar snapshot</button>
@@ -386,7 +387,7 @@
     <div class="ai-runtime-title"><span class="ai-runtime-orb">A</span><div><strong id="aiRuntimeState">AI · OFFLINE</strong><span>Modelo <b id="aiModelName">—</b> · <em id="aiRuntimePulse">LOCAL</em></span></div></div>
     <div class="ai-runtime-tools">
       <button id="aiArmBtn" type="button">Armar PAPER</button>
-      <button id="aiMicBtn" type="button">Hablar</button>
+      <button id="aiMicBtn" type="button" title="Dictado local, no conversación Realtime">Dictar</button>
       <button id="aiSpeakBtn" type="button">Voz OFF</button>
     </div>
   </div>
@@ -403,7 +404,7 @@
 <button data-chat-prompt="Abrí la memoria y explicame la última decisión.">Memoria + decisión</button>
 </div>
 <div class="chat-input-row ai-upgraded">
-<button aria-label="Dictar comando" class="btn secondary ai-mic" id="chatMicProxy" type="button">◉</button>
+<button aria-label="Dictar comando local; no inicia conversación Realtime" class="btn secondary ai-mic" id="chatMicProxy" type="button">◉</button>
 <input aria-label="Comandá APEX" autocomplete="off" id="chatInput" placeholder="Ej.: cerrá la mitad de ETH y explicame el impacto..." type="text">
 <button class="btn primary" id="sendChatBtn">Enviar</button>
 </input></div>
@@ -444,8 +445,8 @@
 <label><span>Stop</span><input id="stopInput" min="0" step="0.01" type="number" value="0"/></label>
 <label><span>Target</span><input id="targetInput" min="0" step="0.01" type="number" value="0"/></label>
 </div>
-<div class="ticket-result" id="ticketResult">Completá el ticket y validalo con el Risk Engine.</div>
-<button class="btn primary wide" id="validateTradeBtn">Validar con Risk Engine</button>
+<div class="ticket-result" id="ticketResult">Completá el ticket: el frontend estima y Unified Risk decide en backend.</div>
+<button class="btn primary wide" id="validateTradeBtn">Prevalidar ticket</button>
 </div>
 </aside>
 
@@ -459,6 +460,8 @@
   </div>
 </div>
 <div aria-live="polite" class="apex-toast" id="apexToast" role="status"></div>
+<script src="assets/js/runtime-security-client.js"></script>
+<script src="assets/js/paper-portfolio-client.js"></script>
 <script src="assets/js/apex-event-bus.js"></script>
 <script src="assets/js/market-math.js"></script>
 <script src="assets/js/market-quality.js"></script>
@@ -468,5 +471,10 @@
 <script src="assets/js/genesis-god-mode.js"></script>
 <script src="assets/js/apex-memory-ui.js"></script>
 <script src="assets/js/apex-ai-command.js"></script>
-<script src="assets/js/apex-7-runtime.js"></script></body>
+<script src="assets/js/apex-7-runtime.js"></script>
+<script src="assets/js/voice/voice-state.js"></script>
+<script src="assets/js/voice/audio-controller.js"></script>
+<script src="assets/js/voice/realtime-client.js"></script>
+<script src="assets/js/voice/transcript-view.js"></script>
+<script src="assets/js/voice/voice-console.js"></script></body>
 </html>
