@@ -421,3 +421,75 @@ humana y colocar Governance entre Risk y cualquier efecto PAPER.
 ### Resultado
 
 `PASS`. Contratos, confirmación y Governance impiden autoridad paralela.
+
+## Gate 5 — Cognitive Improvement Framework
+
+### Objetivo
+
+Permitir que APEX detecte problemas, conserve evidencia y evalúe propuestas de
+mejora sin adquirir capacidad de autoaprobar, autoaplicar, desplegar ni modificar
+reglas activas.
+
+### Implementación
+
+- Contrato versionado `ImprovementProposal` con todos los campos requeridos,
+  evidencia y métricas obligatorias, `requiresHumanApproval=true` forzado por
+  construcción y siete estados explícitos; `AUTO_DEPLOYED` no existe.
+- Registry NDJSON append-only con `fsync`, fingerprint de duplicados y cadena
+  SHA-256 enlazada. El replay valida cada checksum y aborta ante alteraciones.
+- Los registros se clonan y congelan recursivamente antes de incorporarse a la
+  memoria: mutar el objeto de entrada después del append no cambia la auditoría.
+- Policy de auditoría bloquea autoaprobación, autoaplicación, despliegue,
+  borrado de evidencia y propuestas que intenten modificar Safety Kernel,
+  Constitución activa, workflows, deployment o permisos.
+- El evaluator sólo puede terminar en `EVALUATED` o `REJECTED`; resultados y
+  evidencia trazable son obligatorios y nunca producen aprobación automática.
+- Transiciones a desarrollo, implementación externa y auditoría requieren actor
+  `human_operator`; implementación continúa siendo externa al runtime.
+- APIs protegidas:
+  `POST /api/improvements`,
+  `POST /api/improvements/:id/evaluate`,
+  `POST /api/improvements/:id/status`;
+  queries:
+  `GET /api/improvements`,
+  `GET /api/decision-journal`.
+- Decision Journal mínimo append-only registra contexto, evidencia, intent,
+  Risk, Governance, decisión, latencia, resultado y errores de interpretación,
+  timing o ejecución, también con cadena SHA-256.
+- El command pipeline PAPER escribe decisiones bloqueadas, completadas y errores
+  de ejecución en el Journal. No se implementó Replay Lab.
+
+### Archivos
+
+- Creados:
+  `lib/cognitive-improvement/{contracts,audit-policy,evaluator,proposal-registry}.js`,
+  `lib/decision-journal/store.js`,
+  `tests-cognitive-improvement.js`.
+- Modificados:
+  `server.js`, `lib/runtime-security/contracts.js`, `package.json`,
+  `tests-smoke.js`, `.gitignore`,
+  `docs/APEX_7_1_IMPLEMENTATION_LOG.md`.
+
+### Pruebas
+
+- Cognición: 40 aserciones sobre evidencia, estados, ausencia de
+  `AUTO_DEPLOYED`, aprobación/aplicación por modelo, Safety Kernel,
+  Constitución, pérdida de trazabilidad, duplicados, transiciones humanas,
+  borrado de evidencia, persistencia, inmutabilidad y tampering de ambas cadenas.
+- Smoke: queries del registry/journal y rechazo API de propuesta incompleta.
+- `npm.cmd test`: 10/10 suites OK, exit 0, duración 31.212 ms.
+
+### Riesgos y deuda
+
+- El framework conserva y evalúa propuestas, pero deliberadamente no contiene
+  ningún executor, merge, deployment ni editor de código activo.
+- El journal cubre el pipeline PAPER después de autorizar draft/claim. Los
+  rechazos anteriores por sesión o confirmación se conservan en la auditoría de
+  runtime, no se duplican en este journal decisional.
+- La UI dedicada para explorar propuestas queda como consumidor futuro; las APIs
+  y contratos auditables están disponibles en esta versión.
+
+### Resultado
+
+`PASS`. APEX puede proponer y evaluar con trazabilidad, pero no puede autorizarse
+ni aplicar sus propios cambios.

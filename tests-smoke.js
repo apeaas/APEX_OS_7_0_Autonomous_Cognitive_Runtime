@@ -84,6 +84,18 @@ child.stdout.on("data", async chunk => {
     }).then(r => r.json());
     if (!fundAuthorization.ok || fundAuthorization.fund.initialAutonomousContribution !== 1250) throw new Error("Autorización de fondo inválida");
 
+    const initialImprovements = await fetch(`${base}/api/improvements?includeAudit=1`).then(r => r.json());
+    if (!initialImprovements.ok || initialImprovements.proposals.length !== 0 || initialImprovements.audit.length !== 0) throw new Error("Registry cognitivo inicial inválido");
+    const missingEvidence = await securedFetch("/api/improvements", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ problemStatement: "Falta evidencia de prueba." }),
+    });
+    const missingEvidenceBody = await missingEvidence.json();
+    if (missingEvidence.status !== 400 || missingEvidenceBody.error !== "INVALID_IMPROVEMENT_PROPOSAL") throw new Error("Proposal API aceptó evidencia ausente");
+    const decisionJournal = await fetch(`${base}/api/decision-journal`).then(r => r.json());
+    if (!decisionJournal.ok || !Array.isArray(decisionJournal.entries)) throw new Error("Decision Journal no disponible");
+
     for (const secretPath of ["/.env", "/server.js", "/data/apex-runtime-state.json", "/data/apex-market-cache.json"]) {
       const response = await fetch(`http://127.0.0.1:${port}${secretPath}`);
       if (response.status !== 404) throw new Error(`El servidor expuso ${secretPath}`);

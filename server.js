@@ -27,6 +27,9 @@ const { explainRiskDecision } = require("./lib/risk/explain");
 const { hardLocks: safetyHardLocks } = require("./lib/safety-kernel/invariants");
 const { ConfirmationRegistry } = require("./lib/governance/confirmations");
 const { GovernanceEngine } = require("./lib/governance/engine");
+const { evaluateProposal } = require("./lib/cognitive-improvement/evaluator");
+const { ProposalRegistry } = require("./lib/cognitive-improvement/proposal-registry");
+const { DecisionJournal } = require("./lib/decision-journal/store");
 const marketQuality = require("./assets/js/market-quality");
 
 const ROOT = __dirname;
@@ -47,6 +50,8 @@ const MARKET_CACHE_FILE = path.join(DATA_DIR, "apex-market-cache.json");
 const PAPER_LEDGER_FILE = path.join(DATA_DIR, "apex-paper-ledger.ndjson");
 const PAPER_SNAPSHOT_FILE = path.join(DATA_DIR, "apex-paper-snapshot.json");
 const CONSTITUTION_REGISTRY_FILE = path.join(DATA_DIR, "apex-active-constitution.json");
+const IMPROVEMENT_AUDIT_FILE = path.join(DATA_DIR, "apex-improvement-audit.ndjson");
+const DECISION_JOURNAL_FILE = path.join(DATA_DIR, "apex-decision-journal.ndjson");
 const AUTONOMY_SPEC = readJsonFile(path.join(ROOT, "config", "apex_autonomy.json"), {});
 const INTEGRATION_SPEC = readJsonFile(path.join(ROOT, "config", "apex_integrations.json"), {});
 const HUMAN_AUTONOMY_CEILING_PCT = 5;
@@ -73,6 +78,8 @@ const riskEngine = new RiskEngine({ constitution: activeConstitution });
 const governanceEngine = new GovernanceEngine({ constitution: activeConstitution });
 const confirmationRegistry = new ConfirmationRegistry();
 const autonomousFund = new AutonomousFundService({ store: paperEventStore, snapshots: paperSnapshotStore });
+const proposalRegistry = new ProposalRegistry({ filePath: IMPROVEMENT_AUDIT_FILE });
+const decisionJournal = new DecisionJournal({ filePath: DECISION_JOURNAL_FILE });
 const sessionManager = new SessionManager({
   ttlMs: Number(process.env.APEX_SESSION_TTL_MS || 20 * 60 * 1000),
 });
@@ -300,6 +307,16 @@ const server = http.createServer(async (req, res) => {
         hierarchy: ["safety-kernel", "constitution", "governance", "risk", "human-confirmation", "paper-ledger"],
       });
     }
+    if (req.method === "GET" && url.pathname === "/api/improvements") {
+      return sendJson(res, 200, {
+        ok: true,
+        proposals: proposalRegistry.list(),
+        audit: url.searchParams.get("includeAudit") === "1" ? proposalRegistry.auditTrail() : undefined,
+      });
+    }
+    if (req.method === "GET" && url.pathname === "/api/decision-journal") {
+      return sendJson(res, 200, { ok: true, entries: decisionJournal.list(url.searchParams.get("limit")) });
+    }
     if (req.method === "GET" && url.pathname === "/api/market/history") {
       const symbol = normalizeSymbol(url.searchParams.get("symbol"));
       const history = marketGateway.history(symbol);
@@ -407,16 +424,64 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok: true, confirmation });
     }
 
+    if (req.method === "POST" && url.pathname === "/api/improvements") {
+      const payload = await readJson(req);
+      const proposal = proposalRegistry.create(payload, improvementContext(req));
+      appendRuntimeEvent("IMPROVEMENT_PROPOSAL_REGISTERED", { proposalId: proposal.id, source: proposal.source }, "info");
+      return sendJson(res, 201, { ok: true, proposal });
+    }
+
+    const improvementEvaluateMatch = url.pathname.match(/^\/api\/improvements\/([^/]+)\/evaluate$/);
+    if (req.method === "POST" && improvementEvaluateMatch) {
+      const payload = await readJson(req);
+      const proposal = proposalRegistry.get(improvementEvaluateMatch[1]);
+      if (!proposal) return sendJson(res, 404, { error: "PROPOSAL_NOT_FOUND", message: "Propuesta no encontrada." });
+      const evaluation = evaluateProposal(proposal, payload, improvementContext(req));
+      const updated = proposalRegistry.recordEvaluation(proposal.id, payload, evaluation, improvementContext(req));
+      appendRuntimeEvent("IMPROVEMENT_PROPOSAL_EVALUATED", { proposalId: proposal.id, decision: evaluation.decision }, evaluation.decision === "reject" ? "warning" : "info");
+      return sendJson(res, 200, { ok: true, proposal: updated, evaluation });
+    }
+
+    const improvementStatusMatch = url.pathname.match(/^\/api\/improvements\/([^/]+)\/status$/);
+    if (req.method === "POST" && improvementStatusMatch) {
+      const payload = await readJson(req);
+      const proposal = proposalRegistry.transition(improvementStatusMatch[1], payload.status, payload.details || {}, improvementContext(req));
+      appendRuntimeEvent("IMPROVEMENT_PROPOSAL_STATUS_CHANGED", { proposalId: proposal.id, status: proposal.status }, "warning");
+      return sendJson(res, 200, { ok: true, proposal });
+    }
+
     if (req.method === "POST" && url.pathname === "/api/paper/commands") {
+      const decisionStartedAt = Date.now();
       const payload = await readJson(req);
       const authorization = authorizePaperCommand(payload, req.apexSecurity);
       const profile = authorization.autonomous ? "autonomous" : riskProfileFor(payload);
       const riskDecision = evaluatePaperRisk(payload, profile);
-      enforceRiskDecision(riskDecision);
       const governanceDecision = evaluatePaperGovernance(payload, riskDecision, authorization);
+      if (!["approve", "reduce"].includes(riskDecision.decision) || !["approve", "reduce"].includes(governanceDecision.decision) || !governanceDecision.operable) {
+        appendDecisionJournal(payload, riskDecision, governanceDecision, profile, decisionStartedAt, {
+          status: "BLOCKED",
+          ledgerVersion: paperCommands.projection.version,
+        });
+      }
+      enforceRiskDecision(riskDecision);
       enforceGovernanceDecision(governanceDecision);
       const approved = riskDecision.decision === "reduce" ? { ...payload, capital: riskDecision.approvedSize } : payload;
-      const result = paperCommands.execute(approved, paperCommandContext(req, approved, riskDecision));
+      let result;
+      try {
+        result = paperCommands.execute(approved, paperCommandContext(req, approved, riskDecision));
+      } catch (error) {
+        appendDecisionJournal(approved, riskDecision, governanceDecision, profile, decisionStartedAt, {
+          status: "FAILED",
+          ledgerVersion: paperCommands.projection.version,
+          executionError: safeError(error),
+        });
+        throw error;
+      }
+      appendDecisionJournal(approved, riskDecision, governanceDecision, profile, decisionStartedAt, {
+        status: "COMPLETED",
+        ledgerVersion: result.projection.version,
+        lastEventApplied: result.projection.lastEventApplied,
+      });
       appendRuntimeEvent("GOVERNED_PAPER_COMMAND_COMPLETED", { commandType: payload.type, riskDecision, governanceDecision, ledgerVersion: result.projection.version }, "success");
       return sendJson(res, 200, { ...result, riskDecision, governanceDecision, riskExplanation: explainRiskDecision(riskDecision) });
     }
@@ -1010,6 +1075,36 @@ function fundCommandContext(req) {
     policyVersion: "autonomous-fund.v1",
     killSwitch: runtime.emergencyStop,
   };
+}
+
+function improvementContext(req) {
+  return {
+    actor: { type: "human_operator", id: req.apexSecurity.session.sessionId },
+    sessionId: req.apexSecurity.session.sessionId,
+    idempotencyKey: req.apexSecurity.idempotencyKey,
+  };
+}
+
+function appendDecisionJournal(intent, riskDecision, governanceDecision, profile, startedAt, outcome) {
+  return decisionJournal.append({
+    context: {
+      runtimeMode: runtime.mode,
+      profile,
+      constitutionVersion: activeConstitution.version,
+      policyVersion: riskDecision.policyVersion,
+      executionMode: "PAPER_ONLY",
+    },
+    evidence: [riskDecision.feedEvidence],
+    intent: sanitizeSnapshot(intent),
+    risk: sanitizeSnapshot(riskDecision),
+    governance: sanitizeSnapshot(governanceDecision),
+    decision: governanceDecision.decision,
+    latencyMs: Math.max(0, Date.now() - startedAt),
+    outcome: sanitizeSnapshot(outcome),
+    interpretationError: sanitizeSnapshot(outcome?.interpretationError ?? null),
+    timingError: sanitizeSnapshot(outcome?.timingError ?? null),
+    executionError: sanitizeSnapshot(outcome?.executionError ?? null),
+  });
 }
 
 function integrationPayload() {
