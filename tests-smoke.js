@@ -8,7 +8,7 @@ const port = 8799;
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "apex7-smoke-"));
 const child = spawn(process.execPath, ["server.js"], {
   cwd: __dirname,
-  env: { ...process.env, APEX_PORT: String(port), OPENAI_API_KEY: "", APEX_DATA_DIR: dataDir },
+  env: { ...process.env, APEX_PORT: String(port), OPENAI_API_KEY: "", APEX_DATA_DIR: dataDir, APEX_MARKET_GATEWAY_DISABLED: "1" },
   stdio: ["ignore", "pipe", "pipe"],
 });
 
