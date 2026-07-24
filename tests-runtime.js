@@ -61,21 +61,11 @@ mock.listen(mockPort, "127.0.0.1", () => {
 
       response = await securedFetch("/api/runtime/cycle", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: "test" }) });
       const cycle = await response.json();
-      if (!response.ok || !cycle.ok || cycle.noop) throw new Error(`Ciclo falló: ${JSON.stringify(cycle)}`);
-      const action = cycle.action;
-      if (action.name !== "execute_paper_trade") throw new Error("Mapeo autónomo incorrecto");
-      if (action.arguments.capital > 200.01) throw new Error("Tamaño no fue limitado por maxPositionPct");
-
-      response = await securedFetch(`/api/runtime/actions/${action.id}/claim`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientId: "test-browser" }) });
-      const claim = await response.json();
-      if (!claim.ok || claim.action.status !== "claimed") throw new Error("Claim falló");
-
-      response = await securedFetch(`/api/runtime/actions/${action.id}/result`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ claimId: claim.claim.claimId, nonce: claim.claim.nonce, ok: true, result: { tradeId: "TEST-1", message: "Paper ejecutado" } }) });
-      const result = await response.json();
-      if (!result.ok || result.action.status !== "completed") throw new Error("Resultado no persistido");
-
+      if (!response.ok || !cycle.ok || !cycle.noop || !String(cycle.message).includes("Gateway autoritativo") || calls !== 0) {
+        throw new Error(`El modelo elevó indebidamente un feed no trusted: ${JSON.stringify(cycle)}`);
+      }
       const state = await fetch(`${base}/api/runtime/state`).then(r => r.json());
-      if (state.history[0]?.status !== "completed" || state.config.autonomyCapPct > 5) throw new Error("Estado final inválido");
+      if (state.queue.length !== 0 || state.config.autonomyCapPct > 5) throw new Error("Estado final inválido");
 
       response = await securedFetch("/api/runtime/emergency", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: true, reason: "test" }) });
       const emergency = await response.json();
@@ -83,7 +73,7 @@ mock.listen(mockPort, "127.0.0.1", () => {
       const stopped = await fetch(`${base}/api/runtime/state`).then(r => r.json());
       if (!stopped.emergencyStop || stopped.mode !== "suspended") throw new Error("Kill switch no suspendió runtime");
 
-      console.log("APEX 7.0 autonomous runtime test: OK");
+      console.log("APEX 7.1 autonomous runtime fail-safe test: OK");
       finish();
     } catch (error) { finish(error); }
   });

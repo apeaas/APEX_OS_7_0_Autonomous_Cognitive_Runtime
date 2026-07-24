@@ -264,3 +264,89 @@ del estado heredado.
 
 `PASS`. Ledger canónico, migración y frontend proyectado con suite completa en
 verde.
+
+## Gate 3 — Safety Kernel, Constitution, Unified Risk and Autonomous Fund
+
+### Objetivo
+
+Establecer límites técnicos no relajables, registrar una Constitución activa por
+hash, sustituir los caminos Risk duplicados por un engine determinístico y
+modelar el aporte autónomo inicial fijo.
+
+### Implementación
+
+- Safety Kernel en código con PAPER_ONLY, live/external accounts/broker/wallet/
+  retiros/transferencias/custodia deshabilitados, feed trusted obligatorio,
+  kill switch absoluto, claim requerido y techo autónomo inicial de 5%.
+- Los hard locks públicos ahora derivan del kernel, no de JSON ni prompts.
+- `patrimonial-constitution.v1.json` incluye identidad, versión, estado,
+  timestamps, hash, objetivo, etapa, límites, autonomía, perfiles Risk, políticas
+  de drawdown/consolidación/transición, vetos, prohibiciones y change control.
+- El registro activo se fija en `APEX_DATA_DIR` por versión+hash. Editar el JSON
+  activo, incluso con un hash válido nuevo, detiene el arranque con
+  `SILENT_CONSTITUTION_CHANGE_BLOCKED`.
+- Las etapas se modelan, pero sólo generan propuestas pendientes de confirmación
+  humana; no existe transición automática.
+- Unified Risk `unified-risk.v1` consume Safety, Constitución, runtime config,
+  feed/frescura, portfolio ledger, cash, equity, riesgo, tamaño, exposición,
+  concentración, duplicados, pérdida diaria, R/R, expiración, etapa y fondo.
+- Ante límites en conflicto se usa el mínimo. Las salidas versionadas son
+  `approve`, `reduce`, `delay`, `reject` con razones, límites, warnings,
+  evidencia de feed y timestamps.
+- `POST /api/paper/commands` aplica Risk en backend y reemplaza el tamaño por
+  `approvedSize` cuando la decisión es `reduce`.
+- Manual, assistant y autonomía recorren el mismo engine. El scheduler verifica
+  el gateway autoritativo antes de consultar al modelo; un snapshot o modelo no
+  puede declarar trusted un feed.
+- El frontend dejó de atribuirse decisiones Risk: sólo preestima y muestra la
+  decisión/tamaño/riesgo devueltos por backend.
+- Fondo PAPER modelado con los tipos `PATRIMONY_RESERVE`,
+  `AUTONOMOUS_GROWTH_POOL` y `PROFIT_CONSOLIDATION_POOL`, y estados requeridos.
+- La contribución es `capitalReferenceAmount × allocationPct` una sola vez,
+  con base congelada y `allocationPct <= 0.05`.
+- No hay top-up por pérdidas, recálculo por aumento patrimonial, retorno
+  automático de consolidado ni recapitalización. Esta última se rechaza hasta
+  una nueva Constitución y aprobación humana.
+- No se inventaron porcentajes de drawdown o consolidación: permanecen `null` y
+  requieren definición/importe humano explícito.
+- APIs: `GET /api/constitution`, `/api/risk/policy`, `/api/fund`;
+  `POST /api/risk/evaluate`, `/api/fund/commands`.
+
+### Archivos
+
+- Creados:
+  `config/patrimonial-constitution.v1.json`,
+  `lib/safety-kernel/{invariants,evaluator}.js`,
+  `lib/constitution/{schema,registry,evaluator,change-control}.js`,
+  `lib/risk/{contracts,policy,engine,explain}.js`,
+  `lib/autonomous-fund/{model,service}.js`,
+  `tests-constitutional-risk-fund.js`.
+- Modificados:
+  `server.js`, `lib/runtime-security/contracts.js`,
+  `lib/paper-ledger/commands.js`, `assets/js/app.js`, `index.html`,
+  `package.json`, `.gitignore`, `tests-smoke.js`, `tests-runtime.js`.
+
+### Pruebas
+
+- Policy: 43 aserciones sobre Constitución inválida/hash/cambio silencioso,
+  etapa sin autoridad, live, feed untrusted, kill switch, modelo sin autoridad,
+  reducción de riesgo, feed/frescura, duplicado, pérdida diaria, expiración,
+  perfil que intenta elevar límites, fondo >5%, base/contribución, ganancia,
+  pérdida sin top-up, consolidación, recapitalización, freeze e idempotencia.
+- Smoke integra Constitución, fondo y veto Risk con gateway degradado.
+- Runtime confirma que ni snapshot ni modelo elevan la confianza del gateway.
+- `npm.cmd test`: 8/8 suites OK, exit 0, duración 24.467 ms.
+
+### Riesgos y deuda
+
+- Los umbrales de drawdown y consolidación quedan deliberadamente sin valor
+  hasta una decisión humana versionada.
+- El Fondo es una subasignación contable PAPER; la atribución de trades por
+  estrategia/venue queda fuera de esta versión.
+- Governance y confirmaciones versionadas se incorporan en Gate 4 sobre esta
+  decisión Risk única.
+
+### Resultado
+
+`PASS`. Safety Kernel, Constitución, Unified Risk y Fondo PAPER operativos y
+auditables.

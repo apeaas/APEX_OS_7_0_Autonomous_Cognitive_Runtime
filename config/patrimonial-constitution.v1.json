@@ -1,0 +1,117 @@
+{
+  "constitutionId": "APEX-PATRIMONIAL-CONSTITUTION",
+  "version": "1.0.0",
+  "status": "ACTIVE",
+  "createdAt": "2026-07-24T00:00:00.000Z",
+  "effectiveAt": "2026-07-24T00:00:00.000Z",
+  "previousVersion": null,
+  "contentHash": "b6b971f702433d0b94cef3859704477c7ba60913401c366942871ffcd2522df5",
+  "objective": "Preservar y desarrollar patrimonio mediante decisiones auditables, exclusivamente PAPER, con autoridad humana y límites técnicos no ampliables.",
+  "stage": "CAPITAL_BUILDING",
+  "nonNegotiableLimits": {
+    "paperOnly": true,
+    "liveTrading": false,
+    "externalAccounts": false,
+    "brokerExecution": false,
+    "walletSigning": false,
+    "withdrawals": false,
+    "transfers": false,
+    "custody": false,
+    "maximumInitialAutonomousAllocationPct": 0.05,
+    "maximumRiskPerTradePct": 0.005,
+    "maximumPositionPct": 0.02,
+    "maximumDailyLossPct": 0.02,
+    "maximumConcurrentPositions": 5
+  },
+  "autonomyPolicy": {
+    "initialContributionCalculatedOnce": true,
+    "capitalReferenceFrozen": true,
+    "automaticTopUp": false,
+    "automaticRecapitalization": false,
+    "selfExpansion": false,
+    "humanApprovalRequired": true
+  },
+  "riskProfiles": {
+    "manual": {
+      "enabled": true,
+      "maximumRiskPerTradePct": 0.005,
+      "maximumPositionPct": 0.02,
+      "maximumDailyLossPct": 0.02,
+      "maximumConcurrentPositions": 5
+    },
+    "assistant": {
+      "enabled": true,
+      "maximumRiskPerTradePct": 0.005,
+      "maximumPositionPct": 0.02,
+      "maximumDailyLossPct": 0.02,
+      "maximumConcurrentPositions": 5
+    },
+    "autonomous": {
+      "enabled": true,
+      "maximumRiskPerTradePct": 0.005,
+      "maximumPositionPct": 0.02,
+      "maximumDailyLossPct": 0.02,
+      "maximumConcurrentPositions": 5,
+      "maximumFundAllocationPct": 0.05
+    },
+    "event_intelligence": {
+      "enabled": false,
+      "maximumRiskPerTradePct": 0,
+      "maximumPositionPct": 0,
+      "maximumDailyLossPct": 0,
+      "maximumConcurrentPositions": 0
+    }
+  },
+  "drawdownPolicy": {
+    "restrictionThresholdPct": null,
+    "freezeThresholdPct": null,
+    "automaticStageTransition": false,
+    "humanDefinitionRequired": true
+  },
+  "profitConsolidationPolicy": {
+    "automaticPercentage": null,
+    "humanSpecifiedAmountRequired": true,
+    "returnToGrowthPoolAutomatic": false
+  },
+  "stageTransitionPolicy": {
+    "stages": [
+      "CAPITAL_BUILDING",
+      "EXPANSION",
+      "PRESERVATION",
+      "PATRIMONIAL_ALLOCATION"
+    ],
+    "automaticTransitions": false,
+    "humanConfirmationRequired": true,
+    "auditRequired": true
+  },
+  "vetoPolicy": {
+    "safetyKernel": "ABSOLUTE",
+    "constitution": "ABSOLUTE",
+    "governance": "HARD",
+    "risk": "HARD",
+    "humanConfirmation": "REQUIRED_WHEN_MUTABLE"
+  },
+  "prohibitions": [
+    "LIVE_TRADING",
+    "EXTERNAL_ACCOUNTS",
+    "BROKER_EXECUTION",
+    "WALLET_SIGNING",
+    "WITHDRAWALS",
+    "TRANSFERS",
+    "CUSTODY",
+    "MODEL_TRUST_ELEVATION",
+    "MODEL_RISK_ELEVATION",
+    "MODEL_CONSTITUTION_CHANGE",
+    "MODEL_KILL_SWITCH_DISABLE",
+    "MODEL_FUND_RECAPITALIZATION",
+    "SELF_APPROVAL",
+    "SELF_DEPLOYMENT"
+  ],
+  "changeControl": {
+    "activeDocumentImmutable": true,
+    "newVersionRequired": true,
+    "humanApprovalRequired": true,
+    "auditRecordRequired": true,
+    "silentFileActivation": false
+  }
+}

@@ -44,15 +44,38 @@ child.stdout.on("data", async chunk => {
     const paperCommand = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      idempotencyKey: "smoke-open-0001",
-      body: JSON.stringify({ type: "open_position", positionId: "SMOKE-1", symbol: "ETHUSDT", capital: 100, entry: 100, stop: 95, target: 110, expectedVersion: 1 }),
+      idempotencyKey: "smoke-import-0001",
+      body: JSON.stringify({ portfolio: { equity: 25000, cash: 25000, realized: 0, positions: [], closedTrades: [] }, expectedVersion: 1 }),
     };
-    const paperResponse = await securedFetch("/api/paper/commands", paperCommand);
+    const paperResponse = await securedFetch("/api/portfolio/import", paperCommand);
     const paperResult = await paperResponse.json();
-    if (!paperResponse.ok || paperResult.projection.positions[0]?.id !== "SMOKE-1") throw new Error("Command API PAPER inválida");
-    const duplicateResponse = await securedFetch("/api/paper/commands", paperCommand);
+    if (!paperResponse.ok || !paperResult.projection.legacyImported) throw new Error("Migración PAPER inválida");
+    const duplicateResponse = await securedFetch("/api/portfolio/import", paperCommand);
     const duplicateResult = await duplicateResponse.json();
-    if (!duplicateResponse.ok || !duplicateResult.duplicate || duplicateResult.projection.positions.length !== 1) throw new Error("Idempotencia PAPER inválida");
+    if (!duplicateResponse.ok || !duplicateResult.duplicate || duplicateResult.projection.positions.length !== 0) throw new Error("Idempotencia PAPER inválida");
+
+    const blockedPaper = await securedFetch("/api/paper/commands", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "open_position", symbol: "ETHUSDT", capital: 100, entry: 100, stop: 95, target: 110, expectedVersion: paperResult.projection.version }),
+    });
+    const blockedPaperBody = await blockedPaper.json();
+    if (blockedPaper.status !== 409 || blockedPaperBody.error !== "RISK_REJECTED") throw new Error("Risk no bloqueó feed degradado");
+
+    const constitution = await fetch(`${base}/api/constitution`).then(r => r.json());
+    if (!constitution.ok || constitution.constitution.contentHash !== constitution.registry.contentHash) throw new Error("Constitución activa inválida");
+    const invalidFund = await securedFetch("/api/fund/commands", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "authorize", capitalReferenceId: "SMOKE-REF", capitalReferenceAmount: 25000, autonomousAllocationPct: 0.051 }),
+    });
+    if (invalidFund.status !== 400) throw new Error("Fondo permitió superar 5%");
+    const fundAuthorization = await securedFetch("/api/fund/commands", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "authorize", capitalReferenceId: "SMOKE-REF", capitalReferenceAmount: 25000, autonomousAllocationPct: 0.05 }),
+    }).then(r => r.json());
+    if (!fundAuthorization.ok || fundAuthorization.fund.initialAutonomousContribution !== 1250) throw new Error("Autorización de fondo inválida");
 
     for (const secretPath of ["/.env", "/server.js", "/data/apex-runtime-state.json", "/data/apex-market-cache.json"]) {
       const response = await fetch(`http://127.0.0.1:${port}${secretPath}`);

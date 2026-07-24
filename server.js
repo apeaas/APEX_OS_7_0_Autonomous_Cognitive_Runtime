@@ -20,6 +20,11 @@ const { EventStore } = require("./lib/paper-ledger/event-store");
 const { PaperLedgerCommands } = require("./lib/paper-ledger/commands");
 const { PaperLedgerQueries } = require("./lib/paper-ledger/queries");
 const { SnapshotStore } = require("./lib/paper-ledger/snapshots");
+const { AutonomousFundService } = require("./lib/autonomous-fund/service");
+const { ConstitutionRegistry } = require("./lib/constitution/registry");
+const { RiskEngine } = require("./lib/risk/engine");
+const { explainRiskDecision } = require("./lib/risk/explain");
+const { hardLocks: safetyHardLocks } = require("./lib/safety-kernel/invariants");
 const marketQuality = require("./assets/js/market-quality");
 
 const ROOT = __dirname;
@@ -39,6 +44,7 @@ const CLIENT_EVENTS_FILE = path.join(DATA_DIR, "apex-client-events.ndjson");
 const MARKET_CACHE_FILE = path.join(DATA_DIR, "apex-market-cache.json");
 const PAPER_LEDGER_FILE = path.join(DATA_DIR, "apex-paper-ledger.ndjson");
 const PAPER_SNAPSHOT_FILE = path.join(DATA_DIR, "apex-paper-snapshot.json");
+const CONSTITUTION_REGISTRY_FILE = path.join(DATA_DIR, "apex-active-constitution.json");
 const AUTONOMY_SPEC = readJsonFile(path.join(ROOT, "config", "apex_autonomy.json"), {});
 const INTEGRATION_SPEC = readJsonFile(path.join(ROOT, "config", "apex_integrations.json"), {});
 const HUMAN_AUTONOMY_CEILING_PCT = 5;
@@ -56,6 +62,13 @@ const paperSnapshotStore = new SnapshotStore({ filePath: PAPER_SNAPSHOT_FILE });
 const paperCommands = new PaperLedgerCommands({ store: paperEventStore, snapshots: paperSnapshotStore });
 paperCommands.initialize(Number(process.env.APEX_PAPER_INITIAL_CASH || 25_000));
 const paperQueries = new PaperLedgerQueries({ store: paperEventStore });
+const constitutionRegistry = new ConstitutionRegistry({
+  configPath: path.join(ROOT, "config", "patrimonial-constitution.v1.json"),
+  statePath: CONSTITUTION_REGISTRY_FILE,
+});
+const activeConstitution = constitutionRegistry.active();
+const riskEngine = new RiskEngine({ constitution: activeConstitution });
+const autonomousFund = new AutonomousFundService({ store: paperEventStore, snapshots: paperSnapshotStore });
 const sessionManager = new SessionManager({
   ttlMs: Number(process.env.APEX_SESSION_TTL_MS || 20 * 60 * 1000),
 });
@@ -260,6 +273,21 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/api/portfolio/events") {
       return sendJson(res, 200, { ok: true, events: paperQueries.events(url.searchParams.get("limit")) });
     }
+    if (req.method === "GET" && url.pathname === "/api/constitution") {
+      return sendJson(res, 200, { ok: true, constitution: activeConstitution, registry: constitutionRegistry.metadata() });
+    }
+    if (req.method === "GET" && url.pathname === "/api/fund") {
+      autonomousFund.refresh();
+      return sendJson(res, 200, { ok: true, fund: autonomousFund.current(), executionMode: "PAPER_ONLY" });
+    }
+    if (req.method === "GET" && url.pathname === "/api/risk/policy") {
+      return sendJson(res, 200, {
+        ok: true,
+        policyVersion: "unified-risk.v1",
+        constitutionVersion: activeConstitution.version,
+        profiles: activeConstitution.riskProfiles,
+      });
+    }
     if (req.method === "GET" && url.pathname === "/api/market/history") {
       const symbol = normalizeSymbol(url.searchParams.get("symbol"));
       const history = marketGateway.history(symbol);
@@ -341,21 +369,40 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/api/paper/commands") {
       const payload = await readJson(req);
-      const result = paperCommands.execute(payload, paperCommandContext(req, payload));
-      return sendJson(res, 200, result);
+      const riskDecision = evaluatePaperRisk(payload, riskProfileFor(payload));
+      enforceRiskDecision(riskDecision);
+      const approved = riskDecision.decision === "reduce" ? { ...payload, capital: riskDecision.approvedSize } : payload;
+      const result = paperCommands.execute(approved, paperCommandContext(req, approved, riskDecision));
+      return sendJson(res, 200, { ...result, riskDecision, riskExplanation: explainRiskDecision(riskDecision) });
     }
 
     if (req.method === "POST" && url.pathname === "/api/portfolio/import") {
       const payload = await readJson(req);
+      const riskDecision = evaluatePaperRisk({ type: "import_legacy_portfolio" }, "manual");
+      enforceRiskDecision(riskDecision);
       const result = paperCommands.execute({
         type: "import_legacy_portfolio",
         portfolio: payload.portfolio,
         expectedVersion: payload.expectedVersion,
-      }, paperCommandContext(req, payload));
+      }, paperCommandContext(req, payload, riskDecision));
       return sendJson(res, 200, {
         ...result,
+        riskDecision,
         checksum: paperEventStore.last()?.integrity?.checksum || null,
       });
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/risk/evaluate") {
+      const payload = await readJson(req);
+      const profile = ["manual", "assistant", "autonomous", "event_intelligence"].includes(payload.profile) ? payload.profile : "manual";
+      const riskDecision = evaluatePaperRisk(payload, profile);
+      return sendJson(res, 200, { ok: true, riskDecision, explanation: explainRiskDecision(riskDecision) });
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/fund/commands") {
+      const payload = await readJson(req);
+      const result = autonomousFund.execute(payload, fundCommandContext(req));
+      return sendJson(res, 200, result);
     }
 
     if (req.method === "POST" && url.pathname === "/api/realtime/call") {
@@ -462,6 +509,8 @@ async function evaluateAutonomousCycle(options = {}) {
   if (!runtime.snapshot || !runtime.snapshotReceivedAt) return { ok: false, message: "Todavía no existe un snapshot del cockpit." };
   const feedGate = marketQuality.gate("autonomous_cycle", runtime.snapshot?.feedQuality);
   if (!feedGate.ok) return scheduleNoop(feedGate.message);
+  const authoritativeFeedGate = marketQuality.gate("autonomous_cycle", marketGateway.status().quality);
+  if (!authoritativeFeedGate.ok) return scheduleNoop(`Gateway autoritativo: ${authoritativeFeedGate.message}`);
   const ageSeconds = (Date.now() - Date.parse(runtime.snapshotReceivedAt)) / 1000;
   if (ageSeconds > runtime.config.snapshotFreshnessSeconds) return scheduleNoop(`Snapshot viejo (${Math.round(ageSeconds)}s).`);
 
@@ -527,70 +576,49 @@ function validateAndQueueAutonomousAction(name, args) {
 function validateAutonomousPolicy(name, args) {
   if (runtime.mode !== "paper_autonomous") return { ok: false, message: "Modo autónomo no habilitado." };
   if (runtime.emergencyStop) return { ok: false, message: "Kill switch activo." };
-  const snapshot = canonicalRuntimeSnapshot();
-  if (name !== "run_governance_audit") {
-    const feedAction = name === "execute_paper_trade" ? "paper_open" : name === "close_paper_position" ? "paper_close" : "paper_modify";
-    const feedGate = marketQuality.gate(feedAction, snapshot.feedQuality);
-    if (!feedGate.ok) return { ok: false, message: feedGate.message };
-  }
-  const equity = Number(snapshot?.portfolio?.equity || 0);
-  const cash = Number(snapshot?.portfolio?.cash || 0);
-  const positions = Array.isArray(snapshot?.portfolio?.positions) ? snapshot.portfolio.positions : [];
-  const confidence = Number(args.confidence || snapshot?.decision?.confidence || 0);
-  const dailyPnl = Number(snapshot?.portfolio?.dailyPnl || snapshot?.portfolio?.realized || 0);
-  if (!(equity > 0)) return { ok: false, message: "Equity paper no disponible." };
-  if (dailyPnl <= -(equity * runtime.config.dailyLossLimitPct / 100)) return { ok: false, message: "Límite de pérdida diaria alcanzado." };
-  if (confidence < runtime.config.minConfidence && name !== "run_governance_audit") return { ok: false, message: `Confianza ${confidence}% menor al umbral ${runtime.config.minConfidence}%.` };
-
-  if (name === "execute_paper_trade") {
-    const symbol = normalizeSymbol(args.symbol);
-    if (!runtime.config.allowedSymbols.includes(symbol)) return { ok: false, message: "Activo fuera del universo autorizado." };
-    if (!runtime.config.allowOpen) return { ok: false, message: "Aperturas autónomas deshabilitadas." };
-    if (positions.length >= runtime.config.maxConcurrentPositions) return { ok: false, message: "Máximo de posiciones concurrentes alcanzado." };
-    if (positions.some(position => position.symbol === symbol)) return { ok: false, message: "Ya existe una posición abierta en ese activo; no se permite promediar ni duplicar exposición." };
-    const entry = Number(args.entry); const stop = Number(args.stop); const target = Number(args.target); let capital = Number(args.capital);
-    if (!(entry > stop && target > entry && stop > 0)) return { ok: false, message: "Entrada, stop y target inválidos para long spot." };
-    const rr = (target - entry) / (entry - stop);
-    if (rr < runtime.config.minRiskReward) return { ok: false, message: `R/R ${rr.toFixed(2)} menor al mínimo ${runtime.config.minRiskReward}.` };
-    const currentExposure = positions.reduce((sum, item) => sum + Number(item.capital || 0), 0);
-    const totalBudget = equity * runtime.config.autonomyCapPct / 100;
-    const positionLimit = equity * runtime.config.maxPositionPct / 100;
-    const remainingBudget = Math.max(0, totalBudget - currentExposure);
-    capital = Math.min(capital, positionLimit, remainingBudget, cash);
-    if (capital < 10) return { ok: false, message: "Presupuesto autónomo remanente insuficiente." };
-    const riskAmt = capital * ((entry - stop) / entry);
-    const riskLimit = equity * runtime.config.riskPerTradePct / 100;
-    if (riskAmt > riskLimit) {
-      const maxCapitalByRisk = riskLimit / ((entry - stop) / entry);
-      capital = Math.min(capital, maxCapitalByRisk);
-    }
-    if (capital < 10) return { ok: false, message: "El tamaño compatible con Risk es demasiado pequeño." };
-    return { ok: true, arguments: { ...args, symbol, capital: round(capital, 2), entry, stop, target }, metrics: { equity, currentExposure, totalBudget, remainingBudget, positionLimit, riskLimit, riskAmt: round(capital * ((entry - stop) / entry), 2), rr: round(rr, 2), confidence } };
-  }
-
-  if (name === "close_paper_position") {
-    if (!runtime.config.allowClose) return { ok: false, message: "Cierres autónomos deshabilitados." };
-    if (!positions.length) return { ok: false, message: "No hay posiciones para cerrar." };
-    return { ok: true, arguments: { ...args, fraction: clamp(Number(args.fraction || 1), 0.01, 1) }, metrics: { confidence } };
-  }
-
-  if (name === "modify_paper_position") {
-    if (!runtime.config.allowModifyProtection) return { ok: false, message: "Modificaciones autónomas deshabilitadas." };
-    if (!positions.length) return { ok: false, message: "No hay posiciones para modificar." };
-    const position = findSnapshotPosition(positions, args);
-    if (!position) return { ok: false, message: "No se identificó una posición única." };
-    const current = Number(position.currentPrice || position.entry || 0);
-    const newStop = args.stop == null ? Number(position.stop || 0) : Number(args.stop);
-    if (!(newStop > 0 && newStop < current)) return { ok: false, message: "Stop autónomo inválido." };
-    if (Number(position.stop || 0) > 0 && newStop < Number(position.stop)) return { ok: false, message: "La autonomía no puede alejar el stop y aumentar riesgo." };
-    return { ok: true, arguments: { ...args, trade_id: args.trade_id || position.id }, metrics: { confidence, current, priorStop: position.stop, newStop } };
-  }
-
   if (name === "run_governance_audit") {
     if (!runtime.config.allowGovernanceAudit) return { ok: false, message: "Auditoría autónoma deshabilitada." };
-    return { ok: true, arguments: { reason: args.reason || "Auditoría preventiva autónoma" }, metrics: { confidence } };
+    return { ok: true, arguments: { reason: args.reason || "Auditoría preventiva autónoma" }, metrics: { policyVersion: "unified-risk.v1" } };
   }
-  return { ok: false, message: "Política no definida." };
+  const type = {
+    execute_paper_trade: "open_position",
+    close_paper_position: "close_position",
+    modify_paper_position: "modify_position",
+  }[name];
+  if (!type) return { ok: false, message: "Política no definida." };
+  if (type === "open_position" && !runtime.config.allowOpen) return { ok: false, message: "Aperturas autónomas deshabilitadas." };
+  if (type === "close_position" && !runtime.config.allowClose) return { ok: false, message: "Cierres autónomos deshabilitados." };
+  if (type === "modify_position" && !runtime.config.allowModifyProtection) return { ok: false, message: "Modificaciones autónomas deshabilitadas." };
+  const symbol = normalizeSymbol(args.symbol);
+  if (type === "open_position" && !runtime.config.allowedSymbols.includes(symbol)) return { ok: false, message: "Activo fuera del universo autorizado." };
+  const confidence = Number(args.confidence || runtime.snapshot?.decision?.confidence || 0);
+  if (confidence < runtime.config.minConfidence) return { ok: false, message: `Confianza ${confidence}% menor al umbral ${runtime.config.minConfidence}%.` };
+  const portfolio = paperQueries.portfolio(trustedMarketPrices());
+  const position = findSnapshotPosition(portfolio.positions, args);
+  const intent = {
+    ...args,
+    type,
+    symbol: symbol || position?.symbol,
+    positionId: args.trade_id || position?.id,
+    exit: type === "close_position" ? Number(trustedMarketPrices()[position?.symbol]) : args.exit,
+    source: "AUTONOMOUS_RUNTIME",
+  };
+  const decision = evaluatePaperRisk(intent, "autonomous");
+  if (!["approve", "reduce"].includes(decision.decision)) {
+    return { ok: false, message: `Risk ${decision.decision}: ${decision.reasons.join(", ")}.`, riskDecision: decision };
+  }
+  return {
+    ok: true,
+    arguments: {
+      ...args,
+      symbol: intent.symbol,
+      trade_id: intent.positionId,
+      capital: type === "open_position" ? decision.approvedSize : args.capital,
+      exit: intent.exit,
+      source: "AUTONOMOUS_RUNTIME",
+    },
+    metrics: { confidence, riskDecision: decision },
+  };
 }
 
 function scheduleNoop(reason) {
@@ -753,7 +781,8 @@ function createPlanFromAction(args) {
 }
 
 function publicRuntimeState() {
-  return { ok: true, service: "APEX Autonomous Cognitive Runtime", version: "7.0.0", configured: Boolean(OPENAI_API_KEY), model: OPENAI_MODEL, realtimeModel: OPENAI_REALTIME_MODEL, executionMode: "PAPER_ONLY", externalAccounts: false, liveTrading: false, mode: runtime.mode, emergencyStop: runtime.emergencyStop, cycleStatus: runtime.cycleStatus, lastCycleAt: runtime.lastCycleAt, nextCycleAt: runtime.nextCycleAt, snapshotReceivedAt: runtime.snapshotReceivedAt, snapshotFresh: isSnapshotFresh(), config: runtime.config, stats: runtime.stats, queue: runtime.queue.slice(0, 50), history: runtime.history.slice(0, 50), plans: runtime.plans.slice(0, 50), lastCycleDecision: runtime.lastCycleDecision, hardLocks: hardLocks(), integrations: integrationPayload().adapters };
+  autonomousFund.refresh();
+  return { ok: true, service: "APEX Constitutional Cognitive Voice Runtime", version: "7.1.0", configured: Boolean(OPENAI_API_KEY), model: OPENAI_MODEL, realtimeModel: OPENAI_REALTIME_MODEL, executionMode: "PAPER_ONLY", externalAccounts: false, liveTrading: false, mode: runtime.mode, emergencyStop: runtime.emergencyStop, cycleStatus: runtime.cycleStatus, lastCycleAt: runtime.lastCycleAt, nextCycleAt: runtime.nextCycleAt, snapshotReceivedAt: runtime.snapshotReceivedAt, snapshotFresh: isSnapshotFresh(), config: runtime.config, stats: runtime.stats, queue: runtime.queue.slice(0, 50), history: runtime.history.slice(0, 50), plans: runtime.plans.slice(0, 50), lastCycleDecision: runtime.lastCycleDecision, hardLocks: hardLocks(), constitution: constitutionRegistry.metadata(), riskPolicyVersion: "unified-risk.v1", fund: autonomousFund.current(), integrations: integrationPayload().adapters };
 }
 
 function runtimeSummary() {
@@ -782,7 +811,48 @@ function trustedMarketPrices() {
   return Object.fromEntries(Object.entries(snapshot.symbols || {}).map(([symbol, value]) => [symbol, value?.ticker?.price]).filter(([, price]) => Number.isFinite(Number(price)) && Number(price) > 0));
 }
 
-function paperCommandContext(req, payload = {}) {
+function evaluatePaperRisk(intent, profile) {
+  const portfolio = paperQueries.portfolio(trustedMarketPrices());
+  const marketStatus = marketGateway.status();
+  const symbol = normalizeSymbol(intent.symbol);
+  const dailyPnl = portfolio.closedTrades
+    .filter(trade => Date.now() - Date.parse(trade.closedAt) < 86_400_000)
+    .reduce((sum, trade) => sum + Number(trade.pnl || 0), 0);
+  autonomousFund.refresh();
+  return riskEngine.evaluateIntent({
+    ...intent,
+    symbol,
+    executionMode: "PAPER_ONLY",
+    stage: activeConstitution.stage,
+  }, {
+    profile,
+    portfolio,
+    dailyPnl,
+    runtimeConfig: runtime.config,
+    feedQuality: marketStatus.quality,
+    symbolQuality: marketStatus.quality?.symbols?.[symbol],
+    killSwitch: runtime.emergencyStop,
+    fund: autonomousFund.current(),
+  });
+}
+
+function enforceRiskDecision(decision) {
+  if (["approve", "reduce"].includes(decision.decision)) return;
+  const error = new Error(`Risk ${decision.decision}: ${decision.reasons.join(", ")}.`);
+  error.code = decision.decision === "delay" ? "RISK_DELAYED" : "RISK_REJECTED";
+  error.statusCode = 409;
+  error.riskDecision = decision;
+  throw error;
+}
+
+function riskProfileFor(payload) {
+  const source = String(payload.source || "").toUpperCase();
+  if (source === "AUTONOMOUS_RUNTIME") return "autonomous";
+  if (source === "AI_COMMAND" || source === "VOICE_COMMAND") return "assistant";
+  return "manual";
+}
+
+function paperCommandContext(req, payload = {}, riskDecision = null) {
   return {
     idempotencyKey: req.apexSecurity.idempotencyKey,
     sessionId: req.apexSecurity.session.sessionId,
@@ -790,7 +860,18 @@ function paperCommandContext(req, payload = {}) {
     authority: "human_operator",
     correlationId: String(payload.correlationId || req.apexSecurity.idempotencyKey).slice(0, 160),
     causationId: String(payload.causationId || req.apexSecurity.idempotencyKey).slice(0, 160),
-    policyVersion: "paper-ledger.v1",
+    policyVersion: riskDecision?.policyVersion || "paper-ledger.v1",
+    killSwitch: runtime.emergencyStop,
+  };
+}
+
+function fundCommandContext(req) {
+  return {
+    idempotencyKey: req.apexSecurity.idempotencyKey,
+    sessionId: req.apexSecurity.session.sessionId,
+    actor: { type: "human_operator", id: req.apexSecurity.session.sessionId },
+    authority: "human_operator",
+    policyVersion: "autonomous-fund.v1",
     killSwitch: runtime.emergencyStop,
   };
 }
@@ -801,7 +882,7 @@ function integrationPayload() {
 }
 
 function hardLocks() {
-  return { liveTrading: false, externalAccounts: false, withdrawals: false, walletSigning: false, humanAutonomyCeilingPct: HUMAN_AUTONOMY_CEILING_PCT, autonomyCeilingMutableByAI: false, averagingDown: false, longSpotOnly: true };
+  return safetyHardLocks();
 }
 
 function commandCatalog() {

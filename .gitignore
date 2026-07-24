@@ -9,6 +9,7 @@ data/apex-market-cache.json.tmp
 data/apex-paper-ledger.ndjson
 data/apex-paper-ledger.ndjson.truncated-*.bak
 data/apex-paper-snapshot.json
+data/apex-active-constitution.json
 *.log
 .DS_Store
 Thumbs.db

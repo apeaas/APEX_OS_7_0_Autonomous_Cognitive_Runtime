@@ -733,15 +733,10 @@ document.addEventListener("DOMContentLoaded", () => {
         return showTicket("rejected", "OPERACIÓN RECHAZADA", reason);
       }
       const riskAmt = capital * ((entry - stop) / entry);
-      if (riskAmt > state.portfolio.equity * 0.02) {
-        const reason = "El riesgo supera el 2% del equity.";
-        emitEvent("RISK_VETO", { symbol, capital, riskAmt, equity: state.portfolio.equity, reason }, { source: "RISK", category: "risk", severity: "error", symbol });
-        return showTicket("rejected", "OPERACIÓN RECHAZADA", reason);
-      }
       state.ticketValidated = true;
-      els.validateTradeBtn.textContent = "EJECUTAR EN PAPER";
-      emitEvent("RISK_TICKET_APPROVED", { symbol, capital, entry, stop, target, riskAmt }, { source: "RISK", category: "risk", severity: "success", symbol });
-      return showTicket("approved", "APROBADA POR RISK ENGINE", `Capital ${money(capital)} · Riesgo estimado ${money(riskAmt)} · Operación lista.`);
+      els.validateTradeBtn.textContent = "ENVIAR A UNIFIED RISK";
+      emitEvent("PAPER_TICKET_PREVALIDATED", { symbol, capital, entry, stop, target, estimatedRisk: riskAmt }, { source: "UI_ESTIMATE", category: "risk", severity: "info", symbol });
+      return showTicket("approved", "PREVALIDACIÓN LOCAL", `Capital solicitado ${money(capital)} · Riesgo estimado ${money(riskAmt)} · El backend Unified Risk decidirá tamaño y operabilidad.`);
     }
 
     try {
@@ -750,11 +745,13 @@ document.addEventListener("DOMContentLoaded", () => {
         symbol, capital, entry, stop, target, source: "MANUAL_TICKET",
       });
       const id = result.positionId;
-      showTicket("executed", "ORDEN PAPER EJECUTADA", `${id} · ${SYMBOLS[symbol].label} · ${money(capital)} · Estado ABIERTA`);
+      const approvedCapital = Number(result.riskDecision?.approvedSize || capital);
+      showTicket("executed", "ORDEN PAPER EJECUTADA", `${id} · ${SYMBOLS[symbol].label} · ${money(approvedCapital)} · Risk ${result.riskDecision?.decision || "approve"}`);
       els.validateTradeBtn.textContent = "OPERACIÓN EJECUTADA";
       state.ticketExecuted = true;
       emitEvent("PAPER_TRADE_OPENED", {
-        tradeId: id, symbol, capital, entry, stop, target,
+        tradeId: id, symbol, requestedCapital: capital, approvedCapital, entry, stop, target,
+        riskDecision: result.riskDecision,
         ledgerVersion: result.projection.version,
         executionMode: "PAPER_ONLY"
       }, { source: "PAPER_LEDGER", category: "execution", severity: "success", symbol, correlationId: id });
@@ -776,7 +773,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!force && state.ticketExecuted) return;
     state.ticketValidated = false;
     state.ticketExecuted = false;
-    els.validateTradeBtn.textContent = "VALIDAR OPERACIÓN";
+    els.validateTradeBtn.textContent = "PREVALIDAR TICKET";
     els.validateTradeBtn.disabled = false;
     els.ticketResult.className = "validation-result hidden";
   }
@@ -1068,14 +1065,15 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!(capital > 0) || capital > state.portfolio.cash) throw new Error(capital > state.portfolio.cash ? "No hay liquidez paper suficiente." : "Capital inválido.");
     if (!(entry > stop && target > entry && stop > 0)) throw new Error("La relación entrada / stop / target no es válida para una posición long spot.");
     const riskAmt = capital * ((entry - stop) / entry);
-    if (riskAmt > state.portfolio.equity * 0.02) throw new Error("Risk Engine vetó la orden: riesgo mayor al 2% del equity.");
     const result = await window.APEX_PAPER_PORTFOLIO.open({
-      symbol, capital, entry, stop, target, source: "AI_COMMAND",
+      symbol, capital, entry, stop, target, source: input.source || "AI_COMMAND",
     });
     const id = result.positionId;
-    emitEvent("PAPER_TRADE_OPENED", { tradeId: id, symbol, capital, entry, stop, target, riskAmt, rationale: input.rationale || "", ledgerVersion: result.projection.version, executionMode: "PAPER_ONLY", requestedBy: "AI_COMMAND" }, { source: "PAPER_LEDGER", category: "execution", severity: "success", symbol, correlationId: id });
+    const approvedCapital = Number(result.riskDecision?.approvedSize || capital);
+    const approvedRisk = Number(result.riskDecision?.approvedRisk || riskAmt);
+    emitEvent("PAPER_TRADE_OPENED", { tradeId: id, symbol, requestedCapital: capital, approvedCapital, entry, stop, target, approvedRisk, riskDecision: result.riskDecision, rationale: input.rationale || "", ledgerVersion: result.projection.version, executionMode: "PAPER_ONLY", requestedBy: "AI_COMMAND" }, { source: "PAPER_LEDGER", category: "execution", severity: "success", symbol, correlationId: id });
     log("AI Command", `Orden PAPER ${id} registrada en ledger`, "OPEN");
-    return { ok: true, tradeId: id, symbol, riskAmt, ledgerVersion: result.projection.version, message: `Orden PAPER ${id} ejecutada en ${SYMBOLS[symbol].label}. Capital ${money(capital)}; riesgo estimado ${money(riskAmt)}.` };
+    return { ok: true, tradeId: id, symbol, riskAmt: approvedRisk, riskDecision: result.riskDecision, ledgerVersion: result.projection.version, message: `Orden PAPER ${id} ejecutada en ${SYMBOLS[symbol].label}. Capital aprobado ${money(approvedCapital)}; riesgo aprobado ${money(approvedRisk)}.` };
   }
 
   function commandFindPosition(input = {}) {
@@ -1103,6 +1101,7 @@ document.addEventListener("DOMContentLoaded", () => {
       fraction,
       exit: current,
       reason: input.rationale || `AI close ${Math.round(fraction * 100)}%`,
+      source: input.source || "AI_COMMAND",
     });
     const pnl = result.realizedPnL;
     emitEvent("PAPER_TRADE_CLOSED", { tradeId: position.id, symbol: position.symbol, fraction, exit: current, pnl, reason: input.rationale || "AI command", ledgerVersion: result.projection.version, executionMode: "PAPER_ONLY" }, { source: "PAPER_LEDGER", category: "execution", severity: pnl >= 0 ? "success" : "warning", symbol: position.symbol, correlationId: position.id });
@@ -1123,6 +1122,7 @@ document.addEventListener("DOMContentLoaded", () => {
       stop,
       target,
       reason: input.rationale || "",
+      source: input.source || "AI_COMMAND",
     });
     emitEvent("PAPER_POSITION_PROTECTION_MODIFIED", { tradeId: position.id, symbol: position.symbol, stop, target, current, rationale: input.rationale || "", ledgerVersion: result.projection.version, executionMode: "PAPER_ONLY" }, { source: "PAPER_LEDGER", category: "execution", severity: "success", symbol: position.symbol, correlationId: position.id });
     return { ok: true, tradeId: position.id, ledgerVersion: result.projection.version, message: `Protección PAPER actualizada en ${SYMBOLS[position.symbol].label}: stop ${fmtPrice(stop)}, target ${fmtPrice(target)}.` };
